@@ -50,7 +50,7 @@ VITE_API_BASE=http://other-host:8000 npm run dev
 ./deploy.sh --setup-only
 ```
 
-平台的「登录」需要后端能启动可见 Chromium。`deploy.sh` 会自动检测图形环境；如果服务器没有 `DISPLAY`/`WAYLAND_DISPLAY`，登录入口会返回明确的 503 提示，而不是 500。无桌面服务器请在本机桌面终端运行，或自行配置远程可视化。
+平台的「登录」需要后端能启动可见 Chromium。`deploy.sh` 会自动检测图形环境；如果服务器没有 `DISPLAY`/`WAYLAND_DISPLAY` 但安装了 Xvfb/noVNC 组件，脚本会启动虚拟桌面并输出 `http://localhost:6080/vnc.html`。如需强制走虚拟桌面，运行 `NJU_DDL_USE_XVFB=true ./deploy.sh`。
 
 ## 平台适配器
 

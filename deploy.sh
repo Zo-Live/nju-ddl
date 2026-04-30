@@ -9,13 +9,25 @@ BACKEND_PORT="${NJU_DDL_BACKEND_PORT:-8000}"
 FRONTEND_HOST="${NJU_DDL_FRONTEND_HOST:-127.0.0.1}"
 FRONTEND_PORT="${NJU_DDL_FRONTEND_PORT:-5173}"
 LOG_DIR="${TMPDIR:-/tmp}/nju-ddl-tool"
+XVFB_MODE="${NJU_DDL_USE_XVFB:-auto}"
+XVFB_DISPLAY="${NJU_DDL_XVFB_DISPLAY:-:99}"
+XVFB_SCREEN="${NJU_DDL_XVFB_SCREEN:-1280x900x24}"
+VNC_HOST="${NJU_DDL_VNC_HOST:-127.0.0.1}"
+VNC_PORT="${NJU_DDL_VNC_PORT:-5900}"
+NOVNC_HOST="${NJU_DDL_NOVNC_HOST:-127.0.0.1}"
+NOVNC_PORT="${NJU_DDL_NOVNC_PORT:-6080}"
+NOVNC_WEB="${NJU_DDL_NOVNC_WEB:-/usr/share/novnc}"
 BACKEND_URL_HOST="$BACKEND_HOST"
 FRONTEND_URL_HOST="$FRONTEND_HOST"
+NOVNC_URL_HOST="$NOVNC_HOST"
 if [ "$BACKEND_URL_HOST" = "0.0.0.0" ]; then
     BACKEND_URL_HOST="127.0.0.1"
 fi
 if [ "$FRONTEND_URL_HOST" = "0.0.0.0" ]; then
     FRONTEND_URL_HOST="localhost"
+fi
+if [ "$NOVNC_URL_HOST" = "0.0.0.0" ]; then
+    NOVNC_URL_HOST="localhost"
 fi
 
 GREEN='\033[0;32m'
@@ -28,6 +40,7 @@ warn() { printf "${YELLOW}==>${NC} %s\n" "$1"; }
 die()  { printf "${RED}==>${NC} %s\n" "$1"; exit 1; }
 
 SETUP_ONLY=false
+USE_XVFB=false
 
 usage() {
     cat <<EOF
@@ -38,6 +51,10 @@ usage() {
 选项：
   --setup-only   只安装依赖和构建前端，不启动服务
   -h, --help     显示帮助
+
+常用环境变量：
+  NJU_DDL_USE_XVFB=true   强制使用 Xvfb/noVNC 虚拟桌面
+  NJU_DDL_NOVNC_PORT=6080 noVNC 浏览器访问端口
 EOF
 }
 
@@ -120,6 +137,85 @@ PY
     return 1
 }
 
+have_virtual_display_tools() {
+    command -v Xvfb >/dev/null 2>&1 &&
+    command -v x11vnc >/dev/null 2>&1 &&
+    command -v fluxbox >/dev/null 2>&1 &&
+    command -v websockify >/dev/null 2>&1 &&
+    [ -r "$NOVNC_WEB/vnc.html" ]
+}
+
+wait_for_http() {
+    local url="$1"
+    local pid="$2"
+    for _ in $(seq 1 30); do
+        if python3 - "$url" <<'PY' >/dev/null 2>&1; then
+import sys
+import urllib.request
+
+with urllib.request.urlopen(sys.argv[1], timeout=1) as response:
+    if response.status >= 500:
+        raise SystemExit(1)
+PY
+            return 0
+        fi
+        if ! kill -0 "$pid" 2>/dev/null; then
+            return 1
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+start_virtual_display() {
+    say "启动 Xvfb 虚拟桌面..."
+    check_port_free "$VNC_HOST" "$VNC_PORT" "VNC"
+    check_port_free "$NOVNC_HOST" "$NOVNC_PORT" "noVNC"
+
+    XVFB_LOG="$LOG_DIR/xvfb.log"
+    FLUXBOX_LOG="$LOG_DIR/fluxbox.log"
+    X11VNC_LOG="$LOG_DIR/x11vnc.log"
+    NOVNC_LOG="$LOG_DIR/novnc.log"
+    : > "$XVFB_LOG"
+    : > "$FLUXBOX_LOG"
+    : > "$X11VNC_LOG"
+    : > "$NOVNC_LOG"
+
+    export DISPLAY="$XVFB_DISPLAY"
+    unset WAYLAND_DISPLAY
+    Xvfb "$DISPLAY" -screen 0 "$XVFB_SCREEN" -ac -nolisten tcp >"$XVFB_LOG" 2>&1 &
+    XVFB_PID=$!
+    PIDS+=("$XVFB_PID")
+    sleep 1
+    if ! kill -0 "$XVFB_PID" 2>/dev/null; then
+        warn "Xvfb 启动失败。日志：$XVFB_LOG"
+        tail -n 80 "$XVFB_LOG" || true
+        exit 1
+    fi
+
+    fluxbox >"$FLUXBOX_LOG" 2>&1 &
+    FLUXBOX_PID=$!
+    PIDS+=("$FLUXBOX_PID")
+
+    if [ "$VNC_HOST" = "127.0.0.1" ] || [ "$VNC_HOST" = "localhost" ]; then
+        x11vnc -display "$DISPLAY" -localhost -no6 -noipv6 -forever -shared -nopw -rfbport "$VNC_PORT" -rfbportv6 "$VNC_PORT" >"$X11VNC_LOG" 2>&1 &
+    else
+        x11vnc -display "$DISPLAY" -listen "$VNC_HOST" -no6 -noipv6 -forever -shared -nopw -rfbport "$VNC_PORT" -rfbportv6 "$VNC_PORT" >"$X11VNC_LOG" 2>&1 &
+    fi
+    X11VNC_PID=$!
+    PIDS+=("$X11VNC_PID")
+
+    websockify --web "$NOVNC_WEB" "$NOVNC_HOST:$NOVNC_PORT" "$VNC_HOST:$VNC_PORT" >"$NOVNC_LOG" 2>&1 &
+    NOVNC_PID=$!
+    PIDS+=("$NOVNC_PID")
+
+    if ! wait_for_http "http://${NOVNC_URL_HOST}:${NOVNC_PORT}/vnc.html" "$NOVNC_PID"; then
+        warn "noVNC 启动失败或访问超时。日志：$NOVNC_LOG"
+        tail -n 80 "$NOVNC_LOG" || true
+        exit 1
+    fi
+}
+
 # ---- Prerequisites ----
 say "检查依赖..."
 
@@ -144,16 +240,41 @@ if [ -z "${NJU_DDL_SECRET:-}" ]; then
 fi
 export NJU_DDL_SECRET
 
-if [ -z "${NJU_DDL_PLAYWRIGHT_HEADLESS:-}" ]; then
+case "$XVFB_MODE" in
+    auto|true|false|1|0)
+        ;;
+    *)
+        die "NJU_DDL_USE_XVFB 只能是 auto、true、false、1 或 0"
+        ;;
+esac
+
+if [ "$XVFB_MODE" = "true" ] || [ "$XVFB_MODE" = "1" ]; then
+    have_virtual_display_tools || die "NJU_DDL_USE_XVFB=true，但缺少 Xvfb/x11vnc/fluxbox/websockify/noVNC 组件。"
+    USE_XVFB=true
+    export DISPLAY="$XVFB_DISPLAY"
+    export NJU_DDL_PLAYWRIGHT_HEADLESS=false
+    warn "已按 NJU_DDL_USE_XVFB=true 强制启用 Xvfb/noVNC。"
+elif [ -z "${NJU_DDL_PLAYWRIGHT_HEADLESS:-}" ]; then
     if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
         export NJU_DDL_PLAYWRIGHT_HEADLESS=false
         warn "检测到图形环境，本地平台登录将启动可见浏览器。"
+    elif [ "$XVFB_MODE" != "false" ] && [ "$XVFB_MODE" != "0" ] && have_virtual_display_tools; then
+        USE_XVFB=true
+        export DISPLAY="$XVFB_DISPLAY"
+        export NJU_DDL_PLAYWRIGHT_HEADLESS=false
+        warn "未检测到图形环境，将自动启动 Xvfb/noVNC 用于平台手动登录。"
     else
         export NJU_DDL_PLAYWRIGHT_HEADLESS=true
-        warn "未检测到 DISPLAY/WAYLAND_DISPLAY，平台手动登录不可用；请在桌面环境运行或配置远程可视化。"
+        warn "未检测到 DISPLAY/WAYLAND_DISPLAY，也缺少 Xvfb/noVNC 组件；平台手动登录不可用。"
     fi
 elif [ "${NJU_DDL_PLAYWRIGHT_HEADLESS}" = "false" ] && [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
-    warn "NJU_DDL_PLAYWRIGHT_HEADLESS=false，但未检测到图形环境；平台登录请求会返回可诊断错误。"
+    if [ "$XVFB_MODE" != "false" ] && [ "$XVFB_MODE" != "0" ] && have_virtual_display_tools; then
+        USE_XVFB=true
+        export DISPLAY="$XVFB_DISPLAY"
+        warn "NJU_DDL_PLAYWRIGHT_HEADLESS=false，将自动启动 Xvfb/noVNC。"
+    else
+        warn "NJU_DDL_PLAYWRIGHT_HEADLESS=false，但未检测到图形环境或 Xvfb/noVNC 组件；平台登录请求会返回可诊断错误。"
+    fi
 fi
 
 # ---- Frontend ----
@@ -209,6 +330,10 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
+if [ "$USE_XVFB" = true ]; then
+    start_virtual_display
+fi
+
 cd "$BACKEND"
 uv run uvicorn app.main:app --host "$BACKEND_HOST" --port "$BACKEND_PORT" >"$BACKEND_LOG" 2>&1 &
 BACKEND_PID=$!
@@ -237,6 +362,9 @@ say "启动完成！"
 echo ""
 echo "  后端：http://${BACKEND_URL_HOST}:${BACKEND_PORT}"
 echo "  前端：http://${FRONTEND_URL_HOST}:${FRONTEND_PORT}"
+if [ "$USE_XVFB" = true ]; then
+    echo "  虚拟桌面：http://${NOVNC_URL_HOST}:${NOVNC_PORT}/vnc.html"
+fi
 echo "  日志：$LOG_DIR"
 echo ""
 echo "按 Ctrl-C 停止服务。"

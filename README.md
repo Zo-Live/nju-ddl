@@ -32,7 +32,7 @@
 
 启动完成后打开 `http://localhost:5173`。默认后端地址为 `http://127.0.0.1:8000`，前端开发服务器会把 `/api` 请求代理到后端。
 
-平台的「登录」需要后端能启动可见 Chromium。`deploy.sh` 会自动检测 `DISPLAY`/`WAYLAND_DISPLAY`：有图形环境时启用可见浏览器；无图形环境时保持 headless，点击平台登录会返回明确的 503 提示。服务器无桌面时请在本机桌面终端运行，或自行配置 Xvfb/noVNC 等远程可视化。
+平台的「登录」需要后端能启动可见 Chromium。`deploy.sh` 会自动检测 `DISPLAY`/`WAYLAND_DISPLAY`：有图形环境时启用本机可见浏览器；无图形环境但已安装 Xvfb/noVNC 组件时，会自动启动虚拟桌面并输出 `http://localhost:6080/vnc.html`，可在浏览器里完成验证码和平台登录。如需强制走 Xvfb/noVNC，使用 `NJU_DDL_USE_XVFB=true ./deploy.sh`。
 
 如果只想安装依赖并构建，不启动服务：
 
@@ -71,7 +71,7 @@ npm install
 npm run dev
 ```
 
-打开 `http://localhost:5173`，注册账号，然后点击各平台的「登录」按钮完成浏览器登录。平台登录需要可见浏览器；开发模式下前端默认使用同源 `/api`，Vite 会代理到 `http://127.0.0.1:8000`。
+打开 `http://localhost:5173`，注册账号，然后点击各平台的「登录」按钮完成浏览器登录。若脚本输出了虚拟桌面地址，同时打开 `http://localhost:6080/vnc.html` 查看并操作平台登录浏览器。开发模式下前端默认使用同源 `/api`，Vite 会代理到 `http://127.0.0.1:8000`。
 
 #### 生产构建
 
@@ -102,6 +102,11 @@ npm run build     # 输出到 dist/
 | `NJU_DDL_REFRESH_INITIAL_DELAY_SECONDS` | `60` | 首次刷新延迟（秒） |
 | `NJU_DDL_BACKEND_PORT` | `8000` | `deploy.sh` 本地后端端口 |
 | `NJU_DDL_FRONTEND_PORT` | `5173` | `deploy.sh` 本地前端端口 |
+| `NJU_DDL_USE_XVFB` | `auto` | `deploy.sh` 是否使用 Xvfb/noVNC：`auto`、`true`、`false` |
+| `NJU_DDL_XVFB_DISPLAY` | `:99` | `deploy.sh` 自动虚拟桌面使用的 X display |
+| `NJU_DDL_XVFB_SCREEN` | `1280x900x24` | Xvfb 虚拟屏幕规格 |
+| `NJU_DDL_VNC_PORT` | `5900` | x11vnc 本地端口 |
+| `NJU_DDL_NOVNC_PORT` | `6080` | noVNC 浏览器访问端口 |
 | `VITE_API_BASE` | 同源 `/api` | 前端 API 地址（编译时），设置后会覆盖默认同源请求 |
 | `VITE_API_PROXY_TARGET` | `http://127.0.0.1:8000` | Vite 开发代理目标 |
 
