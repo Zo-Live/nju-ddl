@@ -32,6 +32,8 @@
 
 启动完成后打开 `http://localhost:5173`。默认后端地址为 `http://127.0.0.1:8000`，前端开发服务器会把 `/api` 请求代理到后端。
 
+平台的「登录」需要后端能启动可见 Chromium。`deploy.sh` 会自动检测 `DISPLAY`/`WAYLAND_DISPLAY`：有图形环境时启用可见浏览器；无图形环境时保持 headless，点击平台登录会返回明确的 503 提示。服务器无桌面时请在本机桌面终端运行，或自行配置 Xvfb/noVNC 等远程可视化。
+
 如果只想安装依赖并构建，不启动服务：
 
 ```bash
@@ -69,7 +71,7 @@ npm install
 npm run dev
 ```
 
-打开 `http://localhost:5173`，注册账号，然后点击各平台的「登录」按钮完成浏览器登录。开发模式下前端默认使用同源 `/api`，Vite 会代理到 `http://127.0.0.1:8000`。
+打开 `http://localhost:5173`，注册账号，然后点击各平台的「登录」按钮完成浏览器登录。平台登录需要可见浏览器；开发模式下前端默认使用同源 `/api`，Vite 会代理到 `http://127.0.0.1:8000`。
 
 #### 生产构建
 
@@ -94,7 +96,7 @@ npm run build     # 输出到 dist/
 | `NJU_DDL_SECRET` | `dev-secret-change-me` | 加密密钥，生产环境必换 |
 | `NJU_DDL_DATABASE_URL` | `sqlite:///./nju_ddl_tool.db` | 数据库连接字符串 |
 | `NJU_DDL_CORS_ORIGINS` | `http://127.0.0.1:5173,http://localhost:5173` | CORS 允许的源 |
-| `NJU_DDL_PLAYWRIGHT_HEADLESS` | `true` | Playwright 是否 headless；`deploy.sh` 本地启动默认设为 `false` |
+| `NJU_DDL_PLAYWRIGHT_HEADLESS` | `true` | Playwright 是否 headless；`deploy.sh` 未设置时会按图形环境自动选择 |
 | `NJU_DDL_BROWSER_DIR` | `./browser-sessions` | 浏览器用户数据目录 |
 | `NJU_DDL_REFRESH_INTERVAL_MINUTES` | `30` | 自动刷新间隔（分钟） |
 | `NJU_DDL_REFRESH_INITIAL_DELAY_SECONDS` | `60` | 首次刷新延迟（秒） |
@@ -128,7 +130,7 @@ nju-ddl-tool/
 │   ├── App.vue                # 单文件组件
 │   ├── api.ts                 # API 客户端
 │   └── styles.css             # 全局样式
-└── tests/                     # 后端测试（57 个）
+└── tests/                     # 后端测试
 ```
 
 ## 安全

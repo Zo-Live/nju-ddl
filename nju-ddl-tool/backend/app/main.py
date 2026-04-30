@@ -29,7 +29,7 @@ from .schemas import (
 from .security import create_token, decrypt_json, encrypt_json, hash_password, hash_token, verify_password
 from .services.assignments import effective_status, upsert_assignment
 from .services.auth import get_current_user
-from .services.browser_login import browser_login_manager
+from .services.browser_login import BrowserLoginUnavailable, browser_login_manager
 
 
 settings = get_settings()
@@ -237,7 +237,13 @@ async def start_platform_login(
     session.last_error = None
     db.commit()
 
-    login_session = await browser_login_manager.start(user.id, adapter)
+    try:
+        login_session = await browser_login_manager.start(user.id, adapter)
+    except BrowserLoginUnavailable as exc:
+        session.login_state = "login_unavailable"
+        session.last_error = str(exc)
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return BrowserLoginStart(
         login_id=login_session.id,
         platform_id=platform_id,

@@ -145,8 +145,15 @@ fi
 export NJU_DDL_SECRET
 
 if [ -z "${NJU_DDL_PLAYWRIGHT_HEADLESS:-}" ]; then
-    export NJU_DDL_PLAYWRIGHT_HEADLESS=false
-    warn "NJU_DDL_PLAYWRIGHT_HEADLESS 未设置，本地启动默认使用可见浏览器。"
+    if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
+        export NJU_DDL_PLAYWRIGHT_HEADLESS=false
+        warn "检测到图形环境，本地平台登录将启动可见浏览器。"
+    else
+        export NJU_DDL_PLAYWRIGHT_HEADLESS=true
+        warn "未检测到 DISPLAY/WAYLAND_DISPLAY，平台手动登录不可用；请在桌面环境运行或配置远程可视化。"
+    fi
+elif [ "${NJU_DDL_PLAYWRIGHT_HEADLESS}" = "false" ] && [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+    warn "NJU_DDL_PLAYWRIGHT_HEADLESS=false，但未检测到图形环境；平台登录请求会返回可诊断错误。"
 fi
 
 # ---- Frontend ----

@@ -1,12 +1,21 @@
 from dataclasses import dataclass
+import logging
+import os
 from pathlib import Path
 import shutil
+import sys
 import uuid
 
-from playwright.async_api import BrowserContext, Page, async_playwright
+from playwright.async_api import BrowserContext, Error as PlaywrightError, Page, async_playwright
 
 from ..config import get_settings
 from ..platforms.base import PlatformAdapter
+
+logger = logging.getLogger(__name__)
+
+
+class BrowserLoginUnavailable(RuntimeError):
+    pass
 
 
 @dataclass
@@ -29,18 +38,51 @@ class BrowserLoginManager:
             self._playwright = await async_playwright().start()
         return self._playwright
 
+    @staticmethod
+    def _has_graphical_display() -> bool:
+        if not sys.platform.startswith("linux"):
+            return True
+        return bool(os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY"))
+
+    @staticmethod
+    def _ensure_interactive_browser_available(headless: bool) -> None:
+        if headless:
+            raise BrowserLoginUnavailable(
+                "平台登录需要可见浏览器。当前后端运行在 headless 模式，请在有桌面环境的终端设置 "
+                "NJU_DDL_PLAYWRIGHT_HEADLESS=false 后重启，或配置远程可视化。"
+            )
+        if not BrowserLoginManager._has_graphical_display():
+            raise BrowserLoginUnavailable(
+                "平台登录需要可见浏览器，但当前服务器没有检测到 DISPLAY/WAYLAND_DISPLAY。"
+                "请在有桌面环境的终端运行，或配置 Xvfb/noVNC 等远程可视化后重启。"
+            )
+
     async def start(self, user_id: int, adapter: PlatformAdapter) -> LoginSession:
         settings = get_settings()
+        self._ensure_interactive_browser_available(settings.playwright_headless)
         settings.browser_user_data_dir.mkdir(parents=True, exist_ok=True)
         login_id = uuid.uuid4().hex
         user_data_dir = settings.browser_user_data_dir / f"{user_id}-{adapter.id}-{login_id}"
-        playwright = await self._ensure_playwright()
-        context = await playwright.chromium.launch_persistent_context(
-            str(user_data_dir),
-            headless=settings.playwright_headless,
-        )
-        page = context.pages[0] if context.pages else await context.new_page()
-        await page.goto(adapter.login_url, wait_until="domcontentloaded")
+        context: BrowserContext | None = None
+        try:
+            playwright = await self._ensure_playwright()
+            context = await playwright.chromium.launch_persistent_context(
+                str(user_data_dir),
+                headless=settings.playwright_headless,
+            )
+            page = context.pages[0] if context.pages else await context.new_page()
+            await page.goto(adapter.login_url, wait_until="domcontentloaded")
+        except (OSError, PlaywrightError) as exc:
+            if context is not None:
+                try:
+                    await context.close()
+                except PlaywrightError:
+                    pass
+            shutil.rmtree(user_data_dir, ignore_errors=True)
+            logger.warning("Browser login startup failed for %s: %s", adapter.id, exc)
+            raise BrowserLoginUnavailable(
+                "无法启动平台登录浏览器。请确认后端运行环境支持可见浏览器，并已安装 Playwright Chromium。"
+            ) from exc
         session = LoginSession(
             id=login_id,
             user_id=user_id,
