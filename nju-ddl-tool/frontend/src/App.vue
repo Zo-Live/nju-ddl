@@ -26,6 +26,8 @@ const busy = ref('')
 const message = ref('')
 const loading = ref(false)
 const loadError = ref('')
+const confirmDelete = ref<string | null>(null)
+const formErrors = ref<{ username?: string; password?: string }>({})
 
 const isAuthed = computed(() => Boolean(localStorage.getItem('nju-ddl-token')))
 const visibleAssignments = computed(() => {
@@ -35,6 +37,14 @@ const visibleAssignments = computed(() => {
 
 async function signIn() {
   authError.value = ''
+  formErrors.value = {}
+  if (username.value.trim().length < 2) {
+    formErrors.value.username = '用户名至少 2 个字符'
+  }
+  if (password.value.length < 8) {
+    formErrors.value.password = '密码至少 8 个字符'
+  }
+  if (formErrors.value.username || formErrors.value.password) return
   try {
     const result = await login(username.value, password.value, registerMode.value)
     localStorage.setItem('nju-ddl-token', result.token)
@@ -109,6 +119,11 @@ async function refresh(platform: PlatformInfo) {
 }
 
 async function removePlatform(platform: PlatformInfo) {
+  if (confirmDelete.value !== platform.id) {
+    confirmDelete.value = platform.id
+    return
+  }
+  confirmDelete.value = null
   busy.value = platform.id
   try {
     await deletePlatform(platform.id)
@@ -151,10 +166,12 @@ onMounted(loadAll)
         <label>
           用户名
           <input v-model="username" autocomplete="username" />
+          <p v-if="formErrors.username" class="field-error">{{ formErrors.username }}</p>
         </label>
         <label>
           密码
           <input v-model="password" type="password" autocomplete="current-password" />
+          <p v-if="formErrors.password" class="field-error">{{ formErrors.password }}</p>
         </label>
       </div>
       <div class="actions">
@@ -186,7 +203,12 @@ onMounted(loadAll)
           <div class="card-actions">
             <button :disabled="busy === platform.id" @click="beginLogin(platform)">登录</button>
             <button :disabled="!platform.connected || busy === platform.id" @click="refresh(platform)">刷新</button>
-            <button class="secondary" :disabled="busy === platform.id" @click="removePlatform(platform)">删除会话</button>
+            <template v-if="confirmDelete === platform.id">
+              <span class="confirm-text">确认删除？</span>
+              <button class="danger" @click="removePlatform(platform)">确认</button>
+              <button class="secondary" @click="confirmDelete = null">取消</button>
+            </template>
+            <button v-else class="secondary" :disabled="busy === platform.id" @click="removePlatform(platform)">删除会话</button>
           </div>
         </article>
       </section>
