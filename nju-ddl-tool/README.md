@@ -50,14 +50,14 @@ VITE_API_BASE=http://other-host:8000 npm run dev
 ./deploy.sh --setup-only
 ```
 
-平台的「登录」需要后端能启动可见 Chromium。已安装 Xvfb/noVNC 组件时，`deploy.sh` 默认优先启动虚拟桌面，前端会打开自动连接的 noVNC 页面并提供「打开虚拟桌面」按钮。如需改用已有桌面图形环境，运行 `NJU_DDL_USE_XVFB=false ./deploy.sh`。
+平台的「登录」需要后端能启动可见 Chromium。已安装 Xvfb/noVNC 组件时，`deploy.sh` 默认优先启动虚拟桌面，前端会打开自动连接的 noVNC 页面并提供「打开虚拟桌面」按钮。登录状态轮询只检查当前页面状态，不会刷新用户正在输入的登录页。如需改用已有桌面图形环境，运行 `NJU_DDL_USE_XVFB=false ./deploy.sh`。
 
 ## 平台适配器
 
 每个平台适配器实现 `PlatformAdapter` 接口：
 
 - `id` / `name` / `login_url` — 标识
-- `is_logged_in(page)` — 检测登录状态
+- `is_logged_in(page, navigate=True)` — 检测登录状态；手动登录轮询会传 `navigate=False`，避免打断用户输入
 - `fetch_assignments(storage_state)` → `list[NormalizedAssignment]` — 抓取作业
 
 添加新平台只需实现此接口并在 `registry.py` 注册。
