@@ -1,4 +1,9 @@
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000'
+const API_BASE = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
+const API_TARGET = API_BASE || '同源 /api'
+
+function endpoint(path: string) {
+  return API_BASE ? `${API_BASE}${path}` : path
+}
 
 export type PlatformInfo = {
   id: string
@@ -34,15 +39,15 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   headers.set('Content-Type', 'application/json')
   if (token) headers.set('Authorization', `Bearer ${token}`)
   try {
-    const response = await fetch(`${API_BASE}${path}`, { ...options, headers })
+    const response = await fetch(endpoint(path), { ...options, headers })
     const body = await response.json().catch(() => ({}))
     if (!response.ok) {
       throw new Error(body.detail || body.message || `请求失败 (${response.status})`)
     }
     return body as T
   } catch (error) {
-    if (error instanceof TypeError && error.message === 'Failed to fetch') {
-      throw new Error('无法连接服务器，请检查网络')
+    if (error instanceof TypeError) {
+      throw new Error(`无法连接服务器（${API_TARGET}），请确认后端服务已启动`)
     }
     throw error
   }

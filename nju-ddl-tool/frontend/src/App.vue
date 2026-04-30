@@ -15,6 +15,7 @@ import type { Assignment, PlatformInfo } from './api'
 
 const username = ref('')
 const password = ref('')
+const authToken = ref(localStorage.getItem('nju-ddl-token') || '')
 const currentUser = ref(localStorage.getItem('nju-ddl-username') || '')
 const authError = ref('')
 const registerMode = ref(false)
@@ -30,7 +31,7 @@ const loadError = ref('')
 const confirmDelete = ref<string | null>(null)
 const formErrors = ref<{ username?: string; password?: string }>({})
 
-const isAuthed = computed(() => Boolean(localStorage.getItem('nju-ddl-token')))
+const isAuthed = computed(() => Boolean(authToken.value))
 const visibleAssignments = computed(() => {
   let list = assignments.value
   if (selectedPlatform.value !== 'all') {
@@ -50,7 +51,8 @@ const visibleAssignments = computed(() => {
 async function signIn() {
   authError.value = ''
   formErrors.value = {}
-  if (username.value.trim().length < 2) {
+  const normalizedUsername = username.value.trim()
+  if (normalizedUsername.length < 2) {
     formErrors.value.username = '用户名至少 2 个字符'
   }
   if (password.value.length < 8) {
@@ -58,10 +60,12 @@ async function signIn() {
   }
   if (formErrors.value.username || formErrors.value.password) return
   try {
-    const result = await login(username.value, password.value, registerMode.value)
+    const result = await login(normalizedUsername, password.value, registerMode.value)
     localStorage.setItem('nju-ddl-token', result.token)
     localStorage.setItem('nju-ddl-username', result.username)
+    authToken.value = result.token
     currentUser.value = result.username
+    username.value = result.username
     password.value = ''
     await loadAll()
   } catch (error) {
@@ -73,6 +77,7 @@ async function signOut() {
   await logout()
   localStorage.removeItem('nju-ddl-token')
   localStorage.removeItem('nju-ddl-username')
+  authToken.value = ''
   currentUser.value = ''
   platforms.value = []
   assignments.value = []

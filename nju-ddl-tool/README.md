@@ -38,10 +38,16 @@ npm run dev                 # 开发服务器 http://localhost:5173
 npm run build               # 生产构建
 ```
 
-前端默认连接 `http://127.0.0.1:8000`：
+前端默认请求同源 `/api`；开发服务器会把 `/api` 代理到 `http://127.0.0.1:8000`。如需覆盖 API 地址：
 
 ```bash
 VITE_API_BASE=http://other-host:8000 npm run dev
+```
+
+仓库根目录的 `./deploy.sh` 默认会安装依赖、构建前端，并启动后端与前端。只安装构建可用：
+
+```bash
+./deploy.sh --setup-only
 ```
 
 ## 平台适配器

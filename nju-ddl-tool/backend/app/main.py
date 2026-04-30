@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .config import get_settings
@@ -152,7 +153,11 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> AuthResponse
 
     user = User(username=payload.username, password_hash=hash_password(payload.password))
     db.add(user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already exists") from exc
     db.refresh(user)
 
     token = create_token()
@@ -292,7 +297,10 @@ async def refresh_platform(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> dict:
-    adapter = get_adapter(platform_id)
+    try:
+        adapter = get_adapter(platform_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Unknown platform: {platform_id}") from exc
     platform_session = get_or_create_platform_session(db, user.id, platform_id)
     if not platform_session.encrypted_storage_state:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Platform is not connected")

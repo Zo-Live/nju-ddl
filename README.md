@@ -28,7 +28,15 @@
 ./deploy.sh
 ```
 
-脚本会自动完成：检查依赖 → 安装后端/前端依赖 → 安装 Chromium → 构建前端 → 生成密钥。完成后打印启动命令。
+脚本会自动完成：检查依赖 → 安装后端/前端依赖 → 安装 Chromium → 构建前端 → 生成密钥 → 启动后端和前端。
+
+启动完成后打开 `http://localhost:5173`。默认后端地址为 `http://127.0.0.1:8000`，前端开发服务器会把 `/api` 请求代理到后端。
+
+如果只想安装依赖并构建，不启动服务：
+
+```bash
+./deploy.sh --setup-only
+```
 
 ### 手动部署
 
@@ -61,7 +69,7 @@ npm install
 npm run dev
 ```
 
-打开 `http://localhost:5173`，注册账号，然后点击各平台的「登录」按钮完成浏览器登录。
+打开 `http://localhost:5173`，注册账号，然后点击各平台的「登录」按钮完成浏览器登录。开发模式下前端默认使用同源 `/api`，Vite 会代理到 `http://127.0.0.1:8000`。
 
 #### 生产构建
 
@@ -86,11 +94,14 @@ npm run build     # 输出到 dist/
 | `NJU_DDL_SECRET` | `dev-secret-change-me` | 加密密钥，生产环境必换 |
 | `NJU_DDL_DATABASE_URL` | `sqlite:///./nju_ddl_tool.db` | 数据库连接字符串 |
 | `NJU_DDL_CORS_ORIGINS` | `http://127.0.0.1:5173,http://localhost:5173` | CORS 允许的源 |
-| `NJU_DDL_PLAYWRIGHT_HEADLESS` | `true` | Playwright 是否 headless |
+| `NJU_DDL_PLAYWRIGHT_HEADLESS` | `true` | Playwright 是否 headless；`deploy.sh` 本地启动默认设为 `false` |
 | `NJU_DDL_BROWSER_DIR` | `./browser-sessions` | 浏览器用户数据目录 |
 | `NJU_DDL_REFRESH_INTERVAL_MINUTES` | `30` | 自动刷新间隔（分钟） |
 | `NJU_DDL_REFRESH_INITIAL_DELAY_SECONDS` | `60` | 首次刷新延迟（秒） |
-| `VITE_API_BASE` | `http://127.0.0.1:8000` | 前端 API 地址（编译时） |
+| `NJU_DDL_BACKEND_PORT` | `8000` | `deploy.sh` 本地后端端口 |
+| `NJU_DDL_FRONTEND_PORT` | `5173` | `deploy.sh` 本地前端端口 |
+| `VITE_API_BASE` | 同源 `/api` | 前端 API 地址（编译时），设置后会覆盖默认同源请求 |
+| `VITE_API_PROXY_TARGET` | `http://127.0.0.1:8000` | Vite 开发代理目标 |
 
 ## 架构
 

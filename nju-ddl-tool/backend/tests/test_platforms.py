@@ -31,6 +31,10 @@ class TestPlatforms:
         resp = client.post("/api/platforms/educoder/refresh", headers=auth_headers)
         assert resp.status_code == 409
 
+    def test_refresh_unknown_platform(self, client, auth_headers):
+        resp = client.post("/api/platforms/xyz/refresh", headers=auth_headers)
+        assert resp.status_code == 404
+
     def test_unknown_platform(self, client, auth_headers):
         resp = client.post("/api/platforms/xyz/login/start", headers=auth_headers)
         assert resp.status_code == 404

@@ -1,15 +1,25 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
-class UserCreate(BaseModel):
+class UsernamePayload(BaseModel):
+    username: str
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def strip_username(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
+class UserCreate(UsernamePayload):
     username: str = Field(min_length=2, max_length=128)
     password: str = Field(min_length=8, max_length=256)
 
 
-class UserLogin(BaseModel):
-    username: str
+class UserLogin(UsernamePayload):
     password: str
 
 
