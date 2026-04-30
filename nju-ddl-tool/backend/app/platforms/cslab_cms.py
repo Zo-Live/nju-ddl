@@ -2,6 +2,7 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
+from urllib.parse import urlencode
 
 from playwright.async_api import async_playwright
 
@@ -50,6 +51,12 @@ HOMEWORK_RESPONSE_TOKENS = (
     "common_homework",
 )
 
+HOMEWORK_TYPE_BY_TAB = {
+    "common_homework": 1,
+    "group_homework": 3,
+    "shixun_homework": 4,
+}
+
 
 class CslabCmsAdapter(PlatformAdapter):
     id = "cslab_cms"
@@ -62,16 +69,29 @@ class CslabCmsAdapter(PlatformAdapter):
         url = page.url.lower()
         if "authserver.nju.edu.cn" in url:
             return False
+        info = await self._current_user_info(page)
+        if info is not None:
+            return self._is_real_user(info)
+        return False
+
+    async def _current_user_info(self, page) -> dict | None:
         try:
             raw = await page.evaluate("() => localStorage.getItem('userInfo')")
             if raw:
                 info = json.loads(raw)
-                if info.get("login") and info.get("real_name") != "游客":
-                    return True
+                if isinstance(info, dict):
+                    return info
         except Exception:
             pass
-        content = await page.content()
-        return "作业" in content or "课程" in content
+
+        data = await self._fetch_json(page, f"{API_BASE}/users/get_user_info.json")
+        return data if isinstance(data, dict) else None
+
+    @staticmethod
+    def _is_real_user(info: dict | None) -> bool:
+        if not info:
+            return False
+        return bool(info.get("login")) and info.get("real_name") != "游客"
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -145,6 +165,9 @@ class CslabCmsAdapter(PlatformAdapter):
             except Exception:
                 pass
 
+        if not captured:
+            captured.extend(await self._fetch_target_json_fallback(page, target))
+
         items: list[NormalizedAssignment] = []
         seen: set[str] = set()
         for hw in captured:
@@ -153,8 +176,60 @@ class CslabCmsAdapter(PlatformAdapter):
             if not assignment_id or not title or assignment_id in seen:
                 continue
             seen.add(assignment_id)
-            items.append(self._normalize(hw, target))
+            try:
+                items.append(self._normalize(hw, target))
+            except Exception as exc:
+                logger.warning("CSLab CMS assignment normalization failed for %s: %s", assignment_id, exc)
         return items
+
+    async def _fetch_target_json_fallback(self, page, target: HomeworkTarget) -> list[dict]:
+        homework_type = HOMEWORK_TYPE_BY_TAB.get(target.tab)
+        params = {
+            "type": homework_type,
+            "page": 1,
+            "limit": 200,
+            "status": 0,
+        }
+        candidates = [
+            f"{API_BASE}/courses/{target.classroom_id}/homework_commons.json?{urlencode(params)}",
+            f"{API_BASE}/courses/{target.classroom_id}/homework_commons/list.json?{urlencode(params)}",
+            f"{API_BASE}/courses/{target.classroom_id}/homework_commons.json",
+            f"{API_BASE}/courses/{target.classroom_id}/homework_commons/list.json",
+        ]
+
+        found: list[dict] = []
+        for url in candidates:
+            data = await self._fetch_json(page, url)
+            if data:
+                found.extend(self._extract_homeworks(data))
+            if found:
+                break
+        return found
+
+    async def _fetch_json(self, page, url: str):
+        try:
+            return await page.evaluate(
+                """
+                async ([url]) => {
+                    const opts = {
+                        method: 'GET',
+                        credentials: 'include',
+                        headers: {
+                            'Accept': 'application/json',
+                        },
+                    };
+                    const r = await fetch(url, opts);
+                    if (!r.ok) return null;
+                    const contentType = r.headers.get('content-type') || '';
+                    if (!contentType.includes('application/json')) return null;
+                    return await r.json();
+                }
+                """,
+                [url],
+            )
+        except Exception as exc:
+            logger.warning("CSLab CMS JSON fallback failed for %s: %s", url, exc)
+            return None
 
     @staticmethod
     def _is_homework_response(url: str, target: HomeworkTarget) -> bool:
@@ -235,12 +310,29 @@ class CslabCmsAdapter(PlatformAdapter):
         return str(value) if value is not None else None
 
     @staticmethod
-    def _parse_datetime(value: str | None) -> datetime | None:
+    def _parse_datetime(value: object | None) -> datetime | None:
         if not value:
             return None
-        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S%z"):
+        if isinstance(value, datetime):
+            return value if value.tzinfo else value.replace(tzinfo=EDUCODER_TZ)
+        if isinstance(value, (int, float)):
+            timestamp = float(value)
+            if timestamp > 10_000_000_000:
+                timestamp = timestamp / 1000
+            return datetime.fromtimestamp(timestamp, tz=EDUCODER_TZ)
+        if not isinstance(value, str):
+            return None
+        text = value.strip()
+        if text.isdigit():
+            return CslabCmsAdapter._parse_datetime(int(text))
+        for fmt in (
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d %H:%M",
+            "%Y-%m-%dT%H:%M:%S%z",
+            "%Y-%m-%dT%H:%M:%SZ",
+        ):
             try:
-                dt = datetime.strptime(value.strip(), fmt)
+                dt = datetime.strptime(text, fmt)
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=EDUCODER_TZ)
                 return dt

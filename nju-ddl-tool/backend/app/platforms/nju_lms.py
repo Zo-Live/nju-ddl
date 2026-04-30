@@ -151,7 +151,11 @@ class NjuLmsAdapter(PlatformAdapter):
             if dedupe_key in seen:
                 continue
             seen.add(dedupe_key)
-            item = self._normalize(hw, course_id, self._course_name(hw, target), target.url)
+            try:
+                item = self._normalize(hw, course_id, self._course_name(hw, target), target.url)
+            except Exception as exc:
+                logger.warning("NJU LMS assignment normalization failed for %s: %s", assignment_id, exc)
+                continue
             if item is not None:
                 items.append(item)
         return items
@@ -333,20 +337,32 @@ class NjuLmsAdapter(PlatformAdapter):
         return str(value) if value else None
 
     @staticmethod
-    def _published_at(hw: dict) -> str | None:
+    def _published_at(hw: dict) -> object | None:
         data = hw.get("data")
         if isinstance(data, dict) and data.get("publish_time"):
-            return str(data["publish_time"])
+            return data["publish_time"]
         value = hw.get("created_at") or hw.get("publish_time")
-        return str(value) if value else None
+        return value if value else None
 
     @staticmethod
-    def _parse_iso(value: str | None) -> datetime | None:
+    def _parse_iso(value: object | None) -> datetime | None:
         if not value:
             return None
+        if isinstance(value, datetime):
+            return value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        if isinstance(value, (int, float)):
+            timestamp = float(value)
+            if timestamp > 10_000_000_000:
+                timestamp = timestamp / 1000
+            return datetime.fromtimestamp(timestamp, tz=timezone.utc)
+        if not isinstance(value, str):
+            return None
+        text = value.strip()
+        if text.isdigit():
+            return NjuLmsAdapter._parse_iso(int(text))
         for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f%z"):
             try:
-                dt = datetime.strptime(value.strip(), fmt)
+                dt = datetime.strptime(text, fmt)
                 return dt.astimezone(timezone.utc) if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
             except ValueError:
                 continue
@@ -362,6 +378,8 @@ class NjuLmsAdapter(PlatformAdapter):
     def _html_to_text(html: str | None) -> str | None:
         if not html:
             return None
+        if not isinstance(html, str):
+            html = str(html)
         import re
         text = re.sub(r"<[^>]+>", "", html)
         return text.strip() or None
