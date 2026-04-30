@@ -1,5 +1,6 @@
 import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 
 from playwright.async_api import async_playwright
@@ -13,15 +14,35 @@ EDUCODER_TZ = timezone(timedelta(hours=8))
 PAGE_BASE = "https://www.educoder.net"
 API_BASE = "https://data.educoder.net/api"
 
-# (URL tab name, description)
-HOMEWORK_TABS = [
-    ("shixun_homework", "课堂实验"),
-    ("common_homework", "图文作业"),
-    ("group_homework", "分组作业"),
-    ("program_homework", "编程作业"),
-    ("exam", "在线考试"),
-    ("poll", "问卷调查"),
-]
+
+@dataclass(frozen=True)
+class HomeworkTarget:
+    classroom_id: str
+    tab: str
+    course_name: str
+    url: str
+
+
+HOMEWORK_TARGETS = (
+    HomeworkTarget(
+        classroom_id="WUYO52NE",
+        tab="shixun_homework",
+        course_name="WUYO52NE",
+        url=f"{PAGE_BASE}/classrooms/WUYO52NE/shixun_homework",
+    ),
+    HomeworkTarget(
+        classroom_id="8pyfozik",
+        tab="group_homework",
+        course_name="8pyfozik",
+        url=f"{PAGE_BASE}/classrooms/8pyfozik/group_homework",
+    ),
+)
+
+HOMEWORK_RESPONSE_TOKENS = (
+    "homework",
+    "shixun_homework",
+    "group_homework",
+)
 
 
 class EducoderAdapter(PlatformAdapter):
@@ -62,25 +83,21 @@ class EducoderAdapter(PlatformAdapter):
                 if not await self.is_logged_in(page):
                     raise PlatformFetchError("Educoder: session expired, user must re-authenticate")
 
-                zzud = await self._get_zzud(page)
-                if not zzud:
-                    raise PlatformFetchError("Educoder: unable to determine user identity from session")
-
-                courses = await self._fetch_courses_via_navigation(page, zzud)
-                if not courses:
-                    return []
-
                 results: list[NormalizedAssignment] = []
-                for course in courses:
-                    items = await self._fetch_course_assignments(page, zzud, course)
-                    results.extend(items)
+                seen: set[str] = set()
+                for target in HOMEWORK_TARGETS:
+                    for item in await self._fetch_target_assignments(page, target):
+                        if item.platform_assignment_id in seen:
+                            continue
+                        seen.add(item.platform_assignment_id)
+                        results.append(item)
 
                 return results
             finally:
                 await browser.close()
 
     # ------------------------------------------------------------------
-    # Session helpers
+    # Homework extraction
     # ------------------------------------------------------------------
 
     async def _get_zzud(self, page) -> str | None:
@@ -92,115 +109,123 @@ class EducoderAdapter(PlatformAdapter):
             pass
         return None
 
-    # ------------------------------------------------------------------
-    # Step 1 — discover courses by navigating to the classrooms page
-    # ------------------------------------------------------------------
+    async def _fetch_target_assignments(
+        self, page, target: HomeworkTarget
+    ) -> list[NormalizedAssignment]:
+        captured: list[dict] = []
 
-    async def _fetch_courses_via_navigation(self, page, zzud: str) -> list[dict]:
-        courses_data: dict | None = None
-
-        async def _capture(response):
-            nonlocal courses_data
-            if courses_data is not None:
-                return
-            if f"/users/{zzud}/courses.json" not in response.url:
-                return
+        async def _on_response(response):
             if response.status != 200:
+                return
+            if not self._is_homework_response(response.url, target):
                 return
             try:
                 body = await response.text()
                 parsed = json.loads(body)
-                if parsed.get("courses"):
-                    courses_data = parsed
+                captured.extend(self._extract_homeworks(parsed))
             except Exception:
                 pass
 
-        page.on("response", _capture)
+        page.on("response", _on_response)
         try:
-            await page.goto(
-                f"{PAGE_BASE}/users/{zzud}/classrooms",
-                wait_until="domcontentloaded",
-                timeout=30000,
-            )
-            await page.wait_for_timeout(5000)
+            await page.goto(target.url, wait_until="domcontentloaded", timeout=20000)
+            await page.wait_for_timeout(3000)
+        except Exception as exc:
+            logger.warning("Educoder target fetch failed for %s: %s", target.url, exc)
         finally:
-            page.remove_listener("response", _capture)
-
-        if courses_data is None:
-            raise PlatformFetchError("Educoder: failed to fetch course list")
-        return courses_data.get("courses", [])
-
-    # ------------------------------------------------------------------
-    # Step 2 — navigate each homework tab and collect assignments
-    # ------------------------------------------------------------------
-
-    async def _fetch_course_assignments(
-        self, page, zzud: str, course: dict
-    ) -> list[NormalizedAssignment]:
-        course_id = course["id"]
-        course_name = course["name"]
-        classroom_id = self._classroom_id(course)
-        if not classroom_id:
-            return []
-
-        all_items: list[dict] = []
-        for tab, _tab_name in HOMEWORK_TABS:
-            captured: list[dict] = []
-
-            async def _on_response(response):
-                if response.status != 200:
-                    return
-                url = response.url
-                if f"/courses/{classroom_id}/" not in url:
-                    return
-                if "homework_commons" not in url and "polls.json" not in url:
-                    return
-                try:
-                    body = await response.text()
-                    parsed = json.loads(body)
-                    hws = parsed.get("homeworks") or []
-                    if hws:
-                        captured.extend(hws)
-                except Exception:
-                    pass
-
-            page.on("response", _on_response)
             try:
-                page_url = f"{PAGE_BASE}/classrooms/{classroom_id}/{tab}"
-                await page.goto(page_url, wait_until="domcontentloaded", timeout=20000)
-                await page.wait_for_timeout(3000)
+                page.remove_listener("response", _on_response)
             except Exception:
                 pass
-            finally:
-                page.remove_listener("response", _on_response)
 
-            for hw in captured:
-                all_items.append(self._normalize(hw, course_id, course_name, classroom_id, tab))
+        items: list[NormalizedAssignment] = []
+        seen: set[str] = set()
+        for hw in captured:
+            assignment_id = self._homework_id(hw)
+            title = self._homework_title(hw)
+            if not assignment_id or not title or assignment_id in seen:
+                continue
+            seen.add(assignment_id)
+            items.append(self._normalize(hw, target))
+        return items
 
-        return all_items
+    @staticmethod
+    def _is_homework_response(url: str, target: HomeworkTarget) -> bool:
+        lower_url = url.lower()
+        if target.classroom_id.lower() not in lower_url:
+            return False
+        return any(token in lower_url for token in HOMEWORK_RESPONSE_TOKENS)
+
+    @classmethod
+    def _extract_homeworks(cls, payload) -> list[dict]:
+        found: list[dict] = []
+
+        def collect(value) -> None:
+            if isinstance(value, list):
+                for item in value:
+                    if (
+                        isinstance(item, dict)
+                        and cls._homework_id(item)
+                        and cls._homework_title(item)
+                    ):
+                        found.append(item)
+            elif isinstance(value, dict):
+                for key in (
+                    "homeworks",
+                    "homework_commons",
+                    "shixun_homeworks",
+                    "group_homeworks",
+                    "data",
+                    "items",
+                    "list",
+                ):
+                    if key in value:
+                        collect(value[key])
+
+        collect(payload)
+        return found
 
     # ------------------------------------------------------------------
     # Normalization
     # ------------------------------------------------------------------
 
-    def _normalize(
-        self, hw: dict, course_id: int, course_name: str, classroom_id: str, tab: str
-    ) -> NormalizedAssignment:
+    def _normalize(self, hw: dict, target: HomeworkTarget) -> NormalizedAssignment:
+        assignment_id = self._homework_id(hw)
+        title = self._homework_title(hw)
+        course_name = self._homework_course_name(hw) or target.course_name
         return NormalizedAssignment(
             platform_id=self.id,
-            platform_course_id=str(course_id),
+            platform_course_id=target.classroom_id,
             course_name=course_name,
-            platform_assignment_id=str(hw["homework_id"]),
-            title=hw.get("name", ""),
+            platform_assignment_id=str(assignment_id),
+            title=title or "",
             description=None,
             deadline=self._parse_datetime(hw.get("end_time_s") or hw.get("end_time")),
             published_at=self._parse_datetime(hw.get("publish_time")),
             remote_status=self._map_status(hw),
             source_url=(
-                f"{PAGE_BASE}/classrooms/{classroom_id}"
-                f"/{tab}/{hw['homework_id']}/detail"
+                f"{PAGE_BASE}/classrooms/{target.classroom_id}"
+                f"/{target.tab}/{assignment_id}/detail"
             ),
         )
+
+    @staticmethod
+    def _homework_id(hw: dict):
+        return hw.get("homework_id") or hw.get("homework_common_id") or hw.get("id")
+
+    @staticmethod
+    def _homework_title(hw: dict) -> str | None:
+        value = hw.get("name") or hw.get("title") or hw.get("homework_name")
+        return str(value) if value is not None else None
+
+    @staticmethod
+    def _homework_course_name(hw: dict) -> str | None:
+        course = hw.get("course")
+        if isinstance(course, dict):
+            value = course.get("name") or course.get("course_name")
+            return str(value) if value is not None else None
+        value = hw.get("course_name") or hw.get("course")
+        return str(value) if value is not None else None
 
     @staticmethod
     def _parse_datetime(value: str | None) -> datetime | None:
