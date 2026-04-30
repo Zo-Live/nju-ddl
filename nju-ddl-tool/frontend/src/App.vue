@@ -30,6 +30,8 @@ const loading = ref(false)
 const loadError = ref('')
 const confirmDelete = ref<string | null>(null)
 const formErrors = ref<{ username?: string; password?: string }>({})
+const virtualDesktopUrl = (import.meta.env.VITE_NOVNC_URL || '').trim()
+const activeLogin = ref<{ virtualDesktopUrl: string } | null>(null)
 
 const isAuthed = computed(() => Boolean(authToken.value))
 const visibleAssignments = computed(() => {
@@ -81,6 +83,8 @@ async function signOut() {
   currentUser.value = ''
   platforms.value = []
   assignments.value = []
+  activeLogin.value = null
+  message.value = ''
 }
 
 async function loadAll() {
@@ -100,14 +104,23 @@ async function loadAll() {
 async function beginLogin(platform: PlatformInfo) {
   busy.value = platform.id
   message.value = ''
+  activeLogin.value = null
+  const desktopWindow = openVirtualDesktop()
   try {
     const loginSession = await startPlatformLogin(platform.id)
-    message.value = `${platform.name} 登录会话已启动。请在服务器浏览器中完成登录，然后等待检测。`
+    activeLogin.value = {
+      virtualDesktopUrl,
+    }
+    if (desktopWindow && !desktopWindow.closed) desktopWindow.focus()
+    message.value = virtualDesktopUrl
+      ? `${platform.name} 登录会话已启动。请在虚拟桌面中完成登录，然后等待检测。`
+      : `${platform.name} 登录会话已启动。请在服务器浏览器中完成登录，然后等待检测。`
     for (let i = 0; i < 60; i += 1) {
       await new Promise((resolve) => window.setTimeout(resolve, 2000))
       const status = await checkPlatformLogin(platform.id, loginSession.login_id)
       if (status.status === 'complete') {
         message.value = `${platform.name} 已连接。`
+        activeLogin.value = null
         await loadAll()
         return
       }
@@ -115,9 +128,15 @@ async function beginLogin(platform: PlatformInfo) {
     message.value = `${platform.name} 登录仍未完成，请稍后重试检测。`
   } catch (error) {
     message.value = error instanceof Error ? error.message : '启动登录失败'
+    activeLogin.value = null
   } finally {
     busy.value = ''
   }
+}
+
+function openVirtualDesktop() {
+  if (!virtualDesktopUrl) return null
+  return window.open(virtualDesktopUrl, 'nju-ddl-virtual-desktop')
 }
 
 async function refresh(platform: PlatformInfo) {
@@ -231,7 +250,12 @@ onMounted(loadAll)
       </section>
 
       <p v-if="loadError" class="error">{{ loadError }}</p>
-      <p v-if="message" class="message">{{ message }}</p>
+      <div v-if="message || activeLogin?.virtualDesktopUrl" class="message-row">
+        <p v-if="message" class="message">{{ message }}</p>
+        <button v-if="activeLogin?.virtualDesktopUrl" class="secondary" @click="openVirtualDesktop">
+          打开虚拟桌面
+        </button>
+      </div>
 
       <section class="toolbar">
         <select v-model="selectedPlatform">

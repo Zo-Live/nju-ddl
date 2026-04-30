@@ -18,8 +18,9 @@ class NjuLmsAdapter(PlatformAdapter):
     name = "NJU LMS"
     login_url = PAGE_BASE + "/"
 
-    async def is_logged_in(self, page) -> bool:
-        await page.goto(self.login_url, wait_until="domcontentloaded")
+    async def is_logged_in(self, page, *, navigate: bool = True) -> bool:
+        if navigate:
+            await page.goto(self.login_url, wait_until="domcontentloaded")
         url = page.url.lower()
         if "authserver.nju.edu.cn" in url or "lms-identity" in url:
             return False

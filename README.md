@@ -77,7 +77,7 @@ npm install
 npm run dev
 ```
 
-打开 `http://localhost:5173`，注册账号，然后点击各平台的「登录」按钮完成浏览器登录。若脚本输出了虚拟桌面地址，同时打开 `http://localhost:6080/vnc.html` 查看并操作平台登录浏览器。开发模式下前端默认使用同源 `/api`，Vite 会代理到 `http://127.0.0.1:8000`。
+打开 `http://localhost:5173`，注册账号，然后点击各平台的「登录」按钮完成浏览器登录。若脚本启用了虚拟桌面，前端会自动打开 noVNC 虚拟桌面，也会保留「打开虚拟桌面」按钮用于重新进入平台登录浏览器。开发模式下前端默认使用同源 `/api`，Vite 会代理到 `http://127.0.0.1:8000`。
 
 #### 生产构建
 
@@ -109,12 +109,13 @@ npm run build     # 输出到 dist/
 | `NJU_DDL_BACKEND_PORT` | `8000` | `deploy.sh` 本地后端端口 |
 | `NJU_DDL_FRONTEND_PORT` | `5173` | `deploy.sh` 本地前端端口 |
 | `NJU_DDL_USE_XVFB` | `auto` | `deploy.sh` 是否使用 Xvfb/noVNC；`auto` 会在组件可用时优先使用虚拟桌面 |
-| `NJU_DDL_XVFB_DISPLAY` | `:99` | `deploy.sh` 自动虚拟桌面使用的 X display |
+| `NJU_DDL_XVFB_DISPLAY` | `auto` | `deploy.sh` 自动虚拟桌面使用的 X display；默认从 `:99` 开始找空闲值 |
 | `NJU_DDL_XVFB_SCREEN` | `1280x900x24` | Xvfb 虚拟屏幕规格 |
 | `NJU_DDL_VNC_PORT` | `5900` | x11vnc 本地端口 |
 | `NJU_DDL_NOVNC_PORT` | `6080` | noVNC 浏览器访问端口 |
 | `VITE_API_BASE` | 同源 `/api` | 前端 API 地址（编译时），设置后会覆盖默认同源请求 |
 | `VITE_API_PROXY_TARGET` | `http://127.0.0.1:8000` | Vite 开发代理目标 |
+| `VITE_NOVNC_URL` | 空 | 前端平台登录时打开的虚拟桌面地址；`deploy.sh` 启用 Xvfb/noVNC 时会自动设置为带自动连接参数的 noVNC 地址 |
 
 ## 架构
 

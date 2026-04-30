@@ -5,12 +5,27 @@ from playwright.async_api import Error as PlaywrightError
 
 from app.config import get_settings
 from app.services import browser_login as browser_login_module
-from app.services.browser_login import BrowserLoginManager, BrowserLoginUnavailable
+from app.services.browser_login import BrowserLoginManager, BrowserLoginUnavailable, LoginSession
 
 
 class DummyAdapter:
     id = "dummy"
     login_url = "https://example.com"
+
+
+class FakeContext:
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def storage_state(self):
+        return {"cookies": []}
+
+    async def close(self):
+        self.closed = True
+
+
+class FakePage:
+    url = "https://example.com/login"
 
 
 class TestBrowserLoginAvailability:
@@ -60,3 +75,35 @@ class TestBrowserLoginStartupFailure:
             await manager.start(1, DummyAdapter())
 
         assert list(tmp_path.iterdir()) == []
+
+
+class TestBrowserLoginStatusPolling:
+    @pytest.mark.asyncio
+    async def test_status_check_does_not_navigate_manual_login_page(self):
+        class FakeAdapter(DummyAdapter):
+            def __init__(self) -> None:
+                self.navigate_values: list[bool] = []
+
+            async def is_logged_in(self, _page, *, navigate: bool = True) -> bool:
+                self.navigate_values.append(navigate)
+                return True
+
+        manager = BrowserLoginManager()
+        adapter = FakeAdapter()
+        context = FakeContext()
+        manager._sessions["login-id"] = LoginSession(
+            id="login-id",
+            user_id=1,
+            platform_id=adapter.id,
+            adapter=adapter,
+            context=context,
+            page=FakePage(),
+        )
+
+        state, current_url, storage_state = await manager.check_and_save_state("login-id")
+
+        assert state == "complete"
+        assert current_url == "https://example.com/login"
+        assert storage_state == {"cookies": []}
+        assert adapter.navigate_values == [False]
+        assert context.closed is True

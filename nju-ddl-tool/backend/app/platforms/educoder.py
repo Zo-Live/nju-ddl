@@ -29,8 +29,9 @@ class EducoderAdapter(PlatformAdapter):
     name = "Educoder"
     login_url = PAGE_BASE + "/"
 
-    async def is_logged_in(self, page) -> bool:
-        await page.goto(self.login_url, wait_until="domcontentloaded")
+    async def is_logged_in(self, page, *, navigate: bool = True) -> bool:
+        if navigate:
+            await page.goto(self.login_url, wait_until="domcontentloaded")
         content = await page.content()
         if "退出" in content or "我的课堂" in content or "个人中心" in content:
             return True

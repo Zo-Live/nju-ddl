@@ -10,7 +10,7 @@ FRONTEND_HOST="${NJU_DDL_FRONTEND_HOST:-127.0.0.1}"
 FRONTEND_PORT="${NJU_DDL_FRONTEND_PORT:-5173}"
 LOG_DIR="${TMPDIR:-/tmp}/nju-ddl-tool"
 XVFB_MODE="${NJU_DDL_USE_XVFB:-auto}"
-XVFB_DISPLAY="${NJU_DDL_XVFB_DISPLAY:-:99}"
+XVFB_DISPLAY="${NJU_DDL_XVFB_DISPLAY:-auto}"
 XVFB_SCREEN="${NJU_DDL_XVFB_SCREEN:-1280x900x24}"
 VNC_HOST="${NJU_DDL_VNC_HOST:-127.0.0.1}"
 VNC_PORT="${NJU_DDL_VNC_PORT:-5900}"
@@ -30,6 +30,7 @@ fi
 if [ "$NOVNC_URL_HOST" = "0.0.0.0" ]; then
     NOVNC_URL_HOST="localhost"
 fi
+NOVNC_URL="http://${NOVNC_URL_HOST}:${NOVNC_PORT}/vnc.html?autoconnect=true&resize=scale"
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -83,22 +84,35 @@ check_port_free() {
     local host="$1"
     local port="$2"
     local name="$3"
-    if python3 - "$host" "$port" <<'PY'
+    local error
+    if error="$(
+        python3 - "$host" "$port" <<'PY' 2>&1
 import socket
 import sys
 
 host, port = sys.argv[1], int(sys.argv[2])
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-try:
-    sock.bind((host, port))
-finally:
-    sock.close()
+infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+for family, socktype, proto, _, sockaddr in infos:
+    sock = socket.socket(family, socktype, proto)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if family == socket.AF_INET6 and hasattr(socket, "IPV6_V6ONLY"):
+            sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+        sock.bind(sockaddr)
+    except OSError as exc:
+        print(exc, file=sys.stderr)
+        raise SystemExit(1)
+    finally:
+        sock.close()
 PY
-    then
+    )"; then
         return
     fi
 
     warn "${name}端口 ${host}:${port} 已被占用。"
+    if [ -n "$error" ]; then
+        warn "检测信息：$error"
+    fi
     if command -v ss >/dev/null 2>&1; then
         ss -ltnp "sport = :$port" || true
     fi
@@ -182,6 +196,60 @@ have_virtual_display_tools() {
     [ -r "$NOVNC_WEB/vnc.html" ]
 }
 
+xvfb_display_number() {
+    local display="$1"
+    case "$display" in
+        :[0-9]*)
+            display="${display#:}"
+            printf "%s\n" "${display%%.*}"
+            ;;
+        *)
+            die "NJU_DDL_XVFB_DISPLAY 必须是 auto 或类似 :99 的 X display。"
+            ;;
+    esac
+}
+
+xvfb_display_available() {
+    local number="$1"
+    local lock_file="/tmp/.X${number}-lock"
+    local socket_file="/tmp/.X11-unix/X${number}"
+    local lock_pid=""
+
+    if [ -f "$lock_file" ]; then
+        lock_pid="$(tr -dc '0-9' < "$lock_file" || true)"
+        if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
+            return 1
+        fi
+        warn "发现陈旧 Xvfb 锁，自动移除：$lock_file"
+        rm -f "$lock_file" "$socket_file" 2>/dev/null || return 1
+    elif [ -e "$socket_file" ]; then
+        warn "发现陈旧 X11 socket，自动移除：$socket_file"
+        rm -f "$socket_file" 2>/dev/null || return 1
+    fi
+
+    return 0
+}
+
+choose_xvfb_display() {
+    local number
+    if [ "$XVFB_DISPLAY" != "auto" ]; then
+        number="$(xvfb_display_number "$XVFB_DISPLAY")"
+        if xvfb_display_available "$number"; then
+            return
+        fi
+        die "Xvfb display $XVFB_DISPLAY 已被占用。请停止对应进程，或设置 NJU_DDL_XVFB_DISPLAY=:100 后重试。"
+    fi
+
+    for number in $(seq 99 120); do
+        if xvfb_display_available "$number"; then
+            XVFB_DISPLAY=":$number"
+            return
+        fi
+    done
+
+    die "未找到可用的 Xvfb display（已尝试 :99 到 :120）。"
+}
+
 if [ "$STOP_ONLY" = true ]; then
     stop_recorded_services
     exit 0
@@ -213,6 +281,7 @@ start_virtual_display() {
     say "启动 Xvfb 虚拟桌面..."
     check_port_free "$VNC_HOST" "$VNC_PORT" "VNC"
     check_port_free "$NOVNC_HOST" "$NOVNC_PORT" "noVNC"
+    choose_xvfb_display
 
     XVFB_LOG="$LOG_DIR/xvfb.log"
     FLUXBOX_LOG="$LOG_DIR/fluxbox.log"
@@ -251,7 +320,7 @@ start_virtual_display() {
     NOVNC_PID=$!
     PIDS+=("$NOVNC_PID")
 
-    if ! wait_for_http "http://${NOVNC_URL_HOST}:${NOVNC_PORT}/vnc.html" "$NOVNC_PID"; then
+    if ! wait_for_http "$NOVNC_URL" "$NOVNC_PID"; then
         warn "noVNC 启动失败或访问超时。日志：$NOVNC_LOG"
         tail -n 80 "$NOVNC_LOG" || true
         exit 1
@@ -317,6 +386,10 @@ elif [ "${NJU_DDL_PLAYWRIGHT_HEADLESS}" = "false" ] && [ -z "${DISPLAY:-}" ] && 
     else
         warn "NJU_DDL_PLAYWRIGHT_HEADLESS=false，但未检测到图形环境或 Xvfb/noVNC 组件；平台登录请求会返回可诊断错误。"
     fi
+fi
+
+if [ "$USE_XVFB" = true ]; then
+    export VITE_NOVNC_URL="${VITE_NOVNC_URL:-$NOVNC_URL}"
 fi
 
 # ---- Frontend ----
@@ -408,7 +481,7 @@ echo ""
 echo "  后端：http://${BACKEND_URL_HOST}:${BACKEND_PORT}"
 echo "  前端：http://${FRONTEND_URL_HOST}:${FRONTEND_PORT}"
 if [ "$USE_XVFB" = true ]; then
-    echo "  虚拟桌面：http://${NOVNC_URL_HOST}:${NOVNC_PORT}/vnc.html"
+    echo "  虚拟桌面：$NOVNC_URL"
 fi
 echo "  日志：$LOG_DIR"
 echo ""

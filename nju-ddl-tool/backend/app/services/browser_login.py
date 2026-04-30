@@ -103,7 +103,7 @@ class BrowserLoginManager:
             return "missing", None, None
 
         current_url = session.page.url
-        if await session.adapter.is_logged_in(session.page):
+        if await session.adapter.is_logged_in(session.page, navigate=False):
             storage_state = await session.context.storage_state()
             await self.close(login_id, remove_data_dir=False)
             return "complete", current_url, storage_state

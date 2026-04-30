@@ -32,7 +32,7 @@ class PlatformAdapter:
     name: str
     login_url: str
 
-    async def is_logged_in(self, page) -> bool:
+    async def is_logged_in(self, page, *, navigate: bool = True) -> bool:
         raise NotImplementedError
 
     async def fetch_assignments(self, storage_state: dict) -> list[NormalizedAssignment]:
