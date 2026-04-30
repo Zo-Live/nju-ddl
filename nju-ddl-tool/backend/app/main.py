@@ -1,3 +1,6 @@
+import asyncio
+import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -7,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import get_settings
-from .db import get_db, init_db
+from .db import SessionLocal, get_db, init_db
 from .models import ApiSession, Assignment, PlatformSession, User
 from .platforms.base import PlatformFetchError
 from .platforms.registry import ADAPTERS, get_adapter
@@ -29,12 +32,66 @@ from .services.browser_login import browser_login_manager
 
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
+
+
+async def _refresh_all_platforms() -> None:
+    interval_min = int(os.getenv("NJU_DDL_REFRESH_INTERVAL_MINUTES", "30"))
+    initial_delay_s = int(os.getenv("NJU_DDL_REFRESH_INITIAL_DELAY_SECONDS", "60"))
+
+    await asyncio.sleep(initial_delay_s)
+
+    while True:
+        db = SessionLocal()
+        try:
+            sessions = db.scalars(
+                select(PlatformSession).where(
+                    PlatformSession.login_state == "connected",
+                    PlatformSession.encrypted_storage_state.isnot(None),
+                )
+            ).all()
+
+            for ps in sessions:
+                try:
+                    adapter = get_adapter(ps.platform_id)
+                    storage_state = decrypt_json(ps.encrypted_storage_state)
+                    items = await adapter.fetch_assignments(storage_state)
+                    for item in items:
+                        upsert_assignment(db, ps.user_id, item)
+                    ps.last_refresh_at = datetime.now(timezone.utc)
+                    ps.last_error = None
+                    db.commit()
+                    logger.info("Background refresh: %d items from %s for user %d",
+                                len(items), ps.platform_id, ps.user_id)
+                except Exception as exc:
+                    ps.last_error = str(exc)[:500]
+                    try:
+                        db.commit()
+                    except Exception:
+                        db.rollback()
+                    logger.warning("Background refresh failed for %s user %d: %s",
+                                   ps.platform_id, ps.user_id, exc)
+
+                await asyncio.sleep(10)
+
+        except Exception as exc:
+            logger.error("Background refresh cycle error: %s", exc)
+        finally:
+            db.close()
+
+        await asyncio.sleep(interval_min * 60)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    refresh_task = asyncio.create_task(_refresh_all_platforms())
     yield
+    refresh_task.cancel()
+    try:
+        await refresh_task
+    except asyncio.CancelledError:
+        pass
     await browser_login_manager.shutdown()
 
 
