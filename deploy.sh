@@ -17,6 +17,7 @@ VNC_PORT="${NJU_DDL_VNC_PORT:-5900}"
 NOVNC_HOST="${NJU_DDL_NOVNC_HOST:-127.0.0.1}"
 NOVNC_PORT="${NJU_DDL_NOVNC_PORT:-6080}"
 NOVNC_WEB="${NJU_DDL_NOVNC_WEB:-/usr/share/novnc}"
+PID_FILE="${NJU_DDL_PID_FILE:-$LOG_DIR/deploy.pids}"
 BACKEND_URL_HOST="$BACKEND_HOST"
 FRONTEND_URL_HOST="$FRONTEND_HOST"
 NOVNC_URL_HOST="$NOVNC_HOST"
@@ -40,20 +41,22 @@ warn() { printf "${YELLOW}==>${NC} %s\n" "$1"; }
 die()  { printf "${RED}==>${NC} %s\n" "$1"; exit 1; }
 
 SETUP_ONLY=false
+STOP_ONLY=false
 USE_XVFB=false
 
 usage() {
     cat <<EOF
-用法: ./deploy.sh [--setup-only]
+用法: ./deploy.sh [--setup-only|--stop]
 
 默认行为：安装依赖、构建前端，并启动后端 ${BACKEND_HOST}:${BACKEND_PORT} 与前端 ${FRONTEND_HOST}:${FRONTEND_PORT}。
 
 选项：
   --setup-only   只安装依赖和构建前端，不启动服务
+  --stop         停止上一次由 deploy.sh 启动并记录的本地服务
   -h, --help     显示帮助
 
 常用环境变量：
-  NJU_DDL_USE_XVFB=true   强制使用 Xvfb/noVNC 虚拟桌面
+  NJU_DDL_USE_XVFB=false  禁用 Xvfb/noVNC，改用已有 DISPLAY/WAYLAND_DISPLAY
   NJU_DDL_NOVNC_PORT=6080 noVNC 浏览器访问端口
 EOF
 }
@@ -62,6 +65,9 @@ for arg in "$@"; do
     case "$arg" in
         --setup-only)
             SETUP_ONLY=true
+            ;;
+        --stop)
+            STOP_ONLY=true
             ;;
         -h|--help)
             usage
@@ -77,7 +83,7 @@ check_port_free() {
     local host="$1"
     local port="$2"
     local name="$3"
-    python3 - "$host" "$port" <<'PY' || die "${name}端口 ${host}:${port} 已被占用，请停止占用进程或设置对应端口环境变量。"
+    if python3 - "$host" "$port" <<'PY'
 import socket
 import sys
 
@@ -88,6 +94,37 @@ try:
 finally:
     sock.close()
 PY
+    then
+        return
+    fi
+
+    warn "${name}端口 ${host}:${port} 已被占用。"
+    if command -v ss >/dev/null 2>&1; then
+        ss -ltnp "sport = :$port" || true
+    fi
+    die "请停止占用进程，或设置对应端口环境变量后重试。"
+}
+
+stop_recorded_services() {
+    if [ ! -f "$PID_FILE" ]; then
+        warn "未找到 PID 文件：$PID_FILE"
+        return 0
+    fi
+
+    warn "正在停止 PID 文件记录的本地服务..."
+    while IFS= read -r pid; do
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            kill "$pid" 2>/dev/null || true
+        fi
+    done < "$PID_FILE"
+
+    while IFS= read -r pid; do
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            wait "$pid" 2>/dev/null || true
+        fi
+    done < "$PID_FILE"
+
+    rm -f "$PID_FILE"
 }
 
 wait_for_backend() {
@@ -144,6 +181,11 @@ have_virtual_display_tools() {
     command -v websockify >/dev/null 2>&1 &&
     [ -r "$NOVNC_WEB/vnc.html" ]
 }
+
+if [ "$STOP_ONLY" = true ]; then
+    stop_recorded_services
+    exit 0
+fi
 
 wait_for_http() {
     local url="$1"
@@ -255,14 +297,14 @@ if [ "$XVFB_MODE" = "true" ] || [ "$XVFB_MODE" = "1" ]; then
     export NJU_DDL_PLAYWRIGHT_HEADLESS=false
     warn "已按 NJU_DDL_USE_XVFB=true 强制启用 Xvfb/noVNC。"
 elif [ -z "${NJU_DDL_PLAYWRIGHT_HEADLESS:-}" ]; then
-    if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
-        export NJU_DDL_PLAYWRIGHT_HEADLESS=false
-        warn "检测到图形环境，本地平台登录将启动可见浏览器。"
-    elif [ "$XVFB_MODE" != "false" ] && [ "$XVFB_MODE" != "0" ] && have_virtual_display_tools; then
+    if [ "$XVFB_MODE" != "false" ] && [ "$XVFB_MODE" != "0" ] && have_virtual_display_tools; then
         USE_XVFB=true
         export DISPLAY="$XVFB_DISPLAY"
         export NJU_DDL_PLAYWRIGHT_HEADLESS=false
-        warn "未检测到图形环境，将自动启动 Xvfb/noVNC 用于平台手动登录。"
+        warn "检测到 Xvfb/noVNC 组件，默认使用虚拟桌面进行平台手动登录。"
+    elif [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
+        export NJU_DDL_PLAYWRIGHT_HEADLESS=false
+        warn "检测到图形环境，本地平台登录将启动可见浏览器。"
     else
         export NJU_DDL_PLAYWRIGHT_HEADLESS=true
         warn "未检测到 DISPLAY/WAYLAND_DISPLAY，也缺少 Xvfb/noVNC 组件；平台手动登录不可用。"
@@ -325,6 +367,7 @@ cleanup() {
         done
         wait "${PIDS[@]}" 2>/dev/null || true
     fi
+    rm -f "$PID_FILE"
     exit "$exit_code"
 }
 trap cleanup EXIT
@@ -356,6 +399,8 @@ if ! wait_for_frontend "http://${FRONTEND_URL_HOST}:${FRONTEND_PORT}" "$FRONTEND
     tail -n 80 "$FRONTEND_LOG" || true
     exit 1
 fi
+
+printf "%s\n" "${PIDS[@]}" > "$PID_FILE"
 
 echo ""
 say "启动完成！"

@@ -32,12 +32,18 @@
 
 启动完成后打开 `http://localhost:5173`。默认后端地址为 `http://127.0.0.1:8000`，前端开发服务器会把 `/api` 请求代理到后端。
 
-平台的「登录」需要后端能启动可见 Chromium。`deploy.sh` 会自动检测 `DISPLAY`/`WAYLAND_DISPLAY`：有图形环境时启用本机可见浏览器；无图形环境但已安装 Xvfb/noVNC 组件时，会自动启动虚拟桌面并输出 `http://localhost:6080/vnc.html`，可在浏览器里完成验证码和平台登录。如需强制走 Xvfb/noVNC，使用 `NJU_DDL_USE_XVFB=true ./deploy.sh`。
+平台的「登录」需要后端能启动可见 Chromium。已安装 Xvfb/noVNC 组件时，`deploy.sh` 默认优先启动虚拟桌面并输出 `http://localhost:6080/vnc.html`，可在浏览器里完成验证码和平台登录。如需改用已有桌面图形环境，使用 `NJU_DDL_USE_XVFB=false ./deploy.sh`。
 
 如果只想安装依赖并构建，不启动服务：
 
 ```bash
 ./deploy.sh --setup-only
+```
+
+如果上一次启动残留进程，可先尝试：
+
+```bash
+./deploy.sh --stop
 ```
 
 ### 手动部署
@@ -102,7 +108,7 @@ npm run build     # 输出到 dist/
 | `NJU_DDL_REFRESH_INITIAL_DELAY_SECONDS` | `60` | 首次刷新延迟（秒） |
 | `NJU_DDL_BACKEND_PORT` | `8000` | `deploy.sh` 本地后端端口 |
 | `NJU_DDL_FRONTEND_PORT` | `5173` | `deploy.sh` 本地前端端口 |
-| `NJU_DDL_USE_XVFB` | `auto` | `deploy.sh` 是否使用 Xvfb/noVNC：`auto`、`true`、`false` |
+| `NJU_DDL_USE_XVFB` | `auto` | `deploy.sh` 是否使用 Xvfb/noVNC；`auto` 会在组件可用时优先使用虚拟桌面 |
 | `NJU_DDL_XVFB_DISPLAY` | `:99` | `deploy.sh` 自动虚拟桌面使用的 X display |
 | `NJU_DDL_XVFB_SCREEN` | `1280x900x24` | Xvfb 虚拟屏幕规格 |
 | `NJU_DDL_VNC_PORT` | `5900` | x11vnc 本地端口 |
