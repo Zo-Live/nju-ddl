@@ -24,6 +24,8 @@ const includeCompleted = ref(false)
 const selectedPlatform = ref('all')
 const busy = ref('')
 const message = ref('')
+const loading = ref(false)
+const loadError = ref('')
 
 const isAuthed = computed(() => Boolean(localStorage.getItem('nju-ddl-token')))
 const visibleAssignments = computed(() => {
@@ -56,8 +58,16 @@ async function signOut() {
 
 async function loadAll() {
   if (!isAuthed.value) return
-  platforms.value = await getPlatforms()
-  assignments.value = await getAssignments(includeCompleted.value)
+  loading.value = true
+  loadError.value = ''
+  try {
+    platforms.value = await getPlatforms()
+    assignments.value = await getAssignments(includeCompleted.value)
+  } catch (error) {
+    loadError.value = error instanceof Error ? error.message : '加载失败'
+  } finally {
+    loading.value = false
+  }
 }
 
 async function beginLogin(platform: PlatformInfo) {
@@ -110,10 +120,14 @@ async function removePlatform(platform: PlatformInfo) {
 }
 
 async function toggleComplete(item: Assignment) {
-  const updated = await setCompletion(item.id, item.effective_status !== 'completed')
-  const index = assignments.value.findIndex((entry) => entry.id === item.id)
-  if (index >= 0) assignments.value[index] = updated
-  if (!includeCompleted.value) assignments.value = assignments.value.filter((entry) => entry.effective_status !== 'completed')
+  try {
+    const updated = await setCompletion(item.id, item.effective_status !== 'completed')
+    const index = assignments.value.findIndex((entry) => entry.id === item.id)
+    if (index >= 0) assignments.value[index] = updated
+    if (!includeCompleted.value) assignments.value = assignments.value.filter((entry) => entry.effective_status !== 'completed')
+  } catch (error) {
+    message.value = error instanceof Error ? error.message : '操作失败'
+  }
 }
 
 function formatDate(value: string | null) {
@@ -177,6 +191,7 @@ onMounted(loadAll)
         </article>
       </section>
 
+      <p v-if="loadError" class="error">{{ loadError }}</p>
       <p v-if="message" class="message">{{ message }}</p>
 
       <section class="toolbar">
@@ -209,7 +224,8 @@ onMounted(loadAll)
             <span>{{ item.effective_status }}</span>
           </div>
         </article>
-        <p v-if="visibleAssignments.length === 0" class="empty">暂无 DDL</p>
+        <p v-if="loading" class="empty">加载中…</p>
+        <p v-else-if="visibleAssignments.length === 0" class="empty">暂无 DDL</p>
       </section>
     </template>
   </main>
