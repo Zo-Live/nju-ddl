@@ -140,6 +140,14 @@ def get_or_create_platform_session(db: Session, user_id: int, platform_id: str) 
     return session
 
 
+def record_platform_refresh_error(db: Session, platform_session_id: int, message: str) -> None:
+    db.rollback()
+    session = db.get(PlatformSession, platform_session_id)
+    if session is not None:
+        session.last_error = message[:500]
+        db.commit()
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {"ok": True}
@@ -310,6 +318,7 @@ async def refresh_platform(
     platform_session = get_or_create_platform_session(db, user.id, platform_id)
     if not platform_session.encrypted_storage_state:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Platform is not connected")
+    platform_session_id = platform_session.id
 
     try:
         storage_state = decrypt_json(platform_session.encrypted_storage_state)
@@ -322,12 +331,11 @@ async def refresh_platform(
         db.commit()
         return {"ok": True, "count": len(items)}
     except PlatformFetchError as exc:
-        platform_session.last_error = str(exc)
-        db.commit()
+        record_platform_refresh_error(db, platform_session_id, str(exc))
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(exc)) from exc
     except Exception as exc:
-        platform_session.last_error = "Refresh failed"
-        db.commit()
+        logger.exception("Refresh failed for %s user %d", platform_id, user.id)
+        record_platform_refresh_error(db, platform_session_id, "Refresh failed")
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Refresh failed") from exc
 
 

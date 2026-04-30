@@ -1,5 +1,12 @@
 from types import SimpleNamespace
+from uuid import uuid4
 
+from sqlalchemy import select
+
+from app.main import get_or_create_platform_session
+from app.models import Assignment, Course, User
+from app.platforms.base import NormalizedAssignment
+from app.security import encrypt_json
 from app.services.browser_login import BrowserLoginUnavailable
 
 
@@ -57,6 +64,67 @@ class TestPlatforms:
     def test_refresh_unknown_platform(self, client, auth_headers):
         resp = client.post("/api/platforms/xyz/refresh", headers=auth_headers)
         assert resp.status_code == 404
+
+    def test_refresh_imports_multiple_assignments_from_same_course(
+        self,
+        client,
+        auth_headers,
+        db_session,
+        monkeypatch,
+    ):
+        user = db_session.scalar(select(User).where(User.username == "testuser"))
+        platform_session = get_or_create_platform_session(db_session, user.id, "educoder")
+        platform_session.encrypted_storage_state = encrypt_json({"cookies": []})
+        platform_session.login_state = "connected"
+        platform_session.last_error = None
+        db_session.commit()
+
+        course_id = f"course-{uuid4()}"
+        items = [
+            NormalizedAssignment(
+                platform_id="educoder",
+                platform_course_id=course_id,
+                course_name="测试课程",
+                platform_assignment_id=f"hw-{uuid4()}",
+                title="第一份作业",
+            ),
+            NormalizedAssignment(
+                platform_id="educoder",
+                platform_course_id=course_id,
+                course_name="测试课程",
+                platform_assignment_id=f"hw-{uuid4()}",
+                title="第二份作业",
+            ),
+        ]
+
+        class FakeAdapter:
+            id = "educoder"
+
+            async def fetch_assignments(self, _storage_state):
+                return items
+
+        monkeypatch.setattr("app.main.get_adapter", lambda _platform_id: FakeAdapter())
+
+        resp = client.post("/api/platforms/educoder/refresh", headers=auth_headers)
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["count"] == 2
+        courses = db_session.scalars(
+            select(Course).where(
+                Course.user_id == user.id,
+                Course.platform_id == "educoder",
+                Course.platform_course_id == course_id,
+            )
+        ).all()
+        assignments = db_session.scalars(
+            select(Assignment).where(
+                Assignment.user_id == user.id,
+                Assignment.platform_id == "educoder",
+                Assignment.platform_course_id == course_id,
+            )
+        ).all()
+        assert len(courses) == 1
+        assert {assignment.title for assignment in assignments} == {"第一份作业", "第二份作业"}
 
     def test_unknown_platform(self, client, auth_headers):
         resp = client.post("/api/platforms/xyz/login/start", headers=auth_headers)

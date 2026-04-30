@@ -36,6 +36,7 @@ def upsert_course(
             source_url=source_url,
         )
         db.add(course)
+        db.flush()
     else:
         course.name = course_name
         course.source_url = source_url or course.source_url
@@ -45,6 +46,7 @@ def upsert_course(
 
 def upsert_assignment(db: Session, user_id: int, item: NormalizedAssignment | AssignmentImport) -> Assignment:
     now = datetime.now(timezone.utc)
+    is_new = False
     upsert_course(
         db,
         user_id=user_id,
@@ -70,6 +72,7 @@ def upsert_assignment(db: Session, user_id: int, item: NormalizedAssignment | As
             title=item.title,
         )
         db.add(assignment)
+        is_new = True
 
     assignment.platform_course_id = item.platform_course_id
     assignment.course_name = item.course_name
@@ -80,4 +83,6 @@ def upsert_assignment(db: Session, user_id: int, item: NormalizedAssignment | As
     assignment.remote_status = item.remote_status
     assignment.source_url = item.source_url
     assignment.last_seen_at = now
+    if is_new:
+        db.flush()
     return assignment

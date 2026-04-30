@@ -1,3 +1,53 @@
+from uuid import uuid4
+
+from sqlalchemy import select
+
+from app.models import Assignment, Course, User
+from app.platforms.base import NormalizedAssignment
+from app.services.assignments import upsert_assignment
+
+
+class TestAssignmentServices:
+    def test_batch_upsert_reuses_pending_course(self, db_session):
+        user = User(username=f"batch-{uuid4()}", password_hash="x")
+        db_session.add(user)
+        db_session.commit()
+        db_session.refresh(user)
+
+        course_id = f"course-{uuid4()}"
+        for index in range(2):
+            upsert_assignment(
+                db_session,
+                user.id,
+                NormalizedAssignment(
+                    platform_id="educoder",
+                    platform_course_id=course_id,
+                    course_name="测试课程",
+                    platform_assignment_id=f"hw-{uuid4()}",
+                    title=f"测试作业 {index}",
+                ),
+            )
+
+        db_session.commit()
+
+        courses = db_session.scalars(
+            select(Course).where(
+                Course.user_id == user.id,
+                Course.platform_id == "educoder",
+                Course.platform_course_id == course_id,
+            )
+        ).all()
+        assignments = db_session.scalars(
+            select(Assignment).where(
+                Assignment.user_id == user.id,
+                Assignment.platform_id == "educoder",
+                Assignment.platform_course_id == course_id,
+            )
+        ).all()
+        assert len(courses) == 1
+        assert len(assignments) == 2
+
+
 class TestAssignments:
     def test_empty_list(self, client, auth_headers):
         resp = client.get("/api/assignments", headers=auth_headers)
