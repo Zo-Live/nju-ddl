@@ -22,6 +22,7 @@ const platforms = ref<PlatformInfo[]>([])
 const assignments = ref<Assignment[]>([])
 const includeCompleted = ref(false)
 const selectedPlatform = ref('all')
+const sortBy = ref<'deadline' | 'course' | 'platform' | 'status'>('deadline')
 const busy = ref('')
 const message = ref('')
 const loading = ref(false)
@@ -31,8 +32,19 @@ const formErrors = ref<{ username?: string; password?: string }>({})
 
 const isAuthed = computed(() => Boolean(localStorage.getItem('nju-ddl-token')))
 const visibleAssignments = computed(() => {
-  if (selectedPlatform.value === 'all') return assignments.value
-  return assignments.value.filter((item) => item.platform_id === selectedPlatform.value)
+  let list = assignments.value
+  if (selectedPlatform.value !== 'all') {
+    list = list.filter((item) => item.platform_id === selectedPlatform.value)
+  }
+  return [...list].sort((a, b) => {
+    switch (sortBy.value) {
+      case 'deadline': return (a.deadline ?? 'z').localeCompare(b.deadline ?? 'z')
+      case 'course':   return a.course_name.localeCompare(b.course_name)
+      case 'platform': return a.platform_id.localeCompare(b.platform_id)
+      case 'status':   return a.effective_status.localeCompare(b.effective_status)
+      default: return 0
+    }
+  })
 })
 
 async function signIn() {
@@ -220,6 +232,12 @@ onMounted(loadAll)
         <select v-model="selectedPlatform">
           <option value="all">全部平台</option>
           <option v-for="platform in platforms" :key="platform.id" :value="platform.id">{{ platform.name }}</option>
+        </select>
+        <select v-model="sortBy">
+          <option value="deadline">按截止时间</option>
+          <option value="course">按课程</option>
+          <option value="platform">按平台</option>
+          <option value="status">按状态</option>
         </select>
         <label class="inline">
           <input v-model="includeCompleted" type="checkbox" @change="loadAll" />
