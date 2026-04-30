@@ -77,5 +77,18 @@ class BrowserLoginManager:
             for path in base.glob(f"{session.user_id}-{session.platform_id}-{login_id}"):
                 shutil.rmtree(path, ignore_errors=True)
 
+    async def shutdown(self) -> None:
+        for login_id in list(self._sessions):
+            try:
+                await self.close(login_id, remove_data_dir=True)
+            except Exception:
+                pass
+        if self._playwright is not None:
+            try:
+                await self._playwright.stop()
+            except Exception:
+                pass
+            self._playwright = None
+
 
 browser_login_manager = BrowserLoginManager()
