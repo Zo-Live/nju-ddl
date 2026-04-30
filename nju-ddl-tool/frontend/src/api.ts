@@ -78,6 +78,10 @@ export function getAssignments(includeCompleted: boolean) {
   return request<Assignment[]>(`/api/assignments?include_completed=${includeCompleted ? 'true' : 'false'}`)
 }
 
+export function logout() {
+  return request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }).catch(() => ({ ok: false }))
+}
+
 export function setCompletion(id: number, completed: boolean) {
   return request<Assignment>(`/api/assignments/${id}/completion`, {
     method: 'POST',

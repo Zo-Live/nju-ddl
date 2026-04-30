@@ -6,6 +6,7 @@ import {
   getAssignments,
   getPlatforms,
   login,
+  logout,
   refreshPlatform,
   setCompletion,
   startPlatformLogin,
@@ -44,7 +45,8 @@ async function signIn() {
   }
 }
 
-function signOut() {
+async function signOut() {
+  await logout()
   localStorage.removeItem('nju-ddl-token')
   localStorage.removeItem('nju-ddl-username')
   currentUser.value = ''

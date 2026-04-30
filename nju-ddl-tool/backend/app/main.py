@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -114,6 +114,22 @@ def login(payload: UserLogin, db: Session = Depends(get_db)) -> AuthResponse:
     db.add(ApiSession(user_id=user.id, token_hash=hash_token(token)))
     db.commit()
     return AuthResponse(token=token, username=user.username)
+
+
+@app.post("/api/auth/logout")
+def logout(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> dict:
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.removeprefix("Bearer ").strip()
+        session = db.scalar(
+            select(ApiSession).where(ApiSession.token_hash == hash_token(token))
+        )
+        if session is not None:
+            db.delete(session)
+            db.commit()
+    return {"ok": True}
 
 
 @app.get("/api/platforms", response_model=list[PlatformInfo])
