@@ -223,7 +223,10 @@ async def start_platform_login(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> BrowserLoginStart:
-    adapter = get_adapter(platform_id)
+    try:
+        adapter = get_adapter(platform_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Unknown platform: {platform_id}")
     session = get_or_create_platform_session(db, user.id, platform_id)
     session.login_state = "login_required"
     session.last_error = None
