@@ -1,18 +1,17 @@
 # NJU DDL Tool
 
-用于汇总多个 NJU 相关课程平台中未完成作业截止日期的小型共享网站。
+汇总 NJU 课程作业 DDL 的小型网站。
 
 ## 已实现功能
 
-- 后端 API，支持网站用户注册/登录。
-- 按用户隔离的加密平台 cookie 存储。
-- Educoder、NJU LMS 和 CSLab CMS 的平台会话记录。
-- 基于 Playwright 的浏览器辅助登录会话管理器。
-- 统一的平台适配器接口。
-- 作业存储、筛选、手动标记完成和手动导入 API。
-- 用于平台登录状态、刷新操作和 DDL 展示的 Vue 控制面板。
-
-各平台的实际作业提取代码有意隔离在 `backend/app/platforms/` 中，需通过真实账号抓包分析认证后的平台页面/API 响应来完成。
+- 用户注册/登录
+- 加密平台 cookie 存储（Fernet，按用户隔离）
+- Educoder、NJU LMS、CSLab CMS 三平台作业抓取
+- 基于 Playwright 的浏览器辅助登录
+- 统一的平台适配器接口（策略模式）
+- 作业存储、筛选、排序、手动标记完成
+- 定时自动后台刷新
+- 57 个后端单元测试覆盖
 
 ## 后端
 
@@ -20,16 +19,14 @@
 cd nju-ddl-tool/backend
 uv sync
 uv run playwright install chromium
-export NJU_DDL_SECRET="replace-with-a-long-random-secret"
+export NJU_DDL_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 uv run uvicorn app.main:app --reload --port 8000
 ```
 
-后端默认使用 SQLite，数据库文件为 `./nju_ddl_tool.db`。
-
-如果需要用户在服务端浏览器中完成登录（例如桌面环境或无头 VNC/Xvfb 部署），在本地开发时可设置：
+后端默认使用 SQLite（`./nju_ddl_tool.db`），通过 `NJU_DDL_DATABASE_URL` 可切换。
 
 ```bash
-export NJU_DDL_PLAYWRIGHT_HEADLESS=false
+uv run pytest tests/ -v    # 运行测试
 ```
 
 ## 前端
@@ -37,40 +34,29 @@ export NJU_DDL_PLAYWRIGHT_HEADLESS=false
 ```bash
 cd nju-ddl-tool/frontend
 npm install
-npm run dev
+npm run dev                 # 开发服务器 http://localhost:5173
+npm run build               # 生产构建
 ```
 
-前端默认连接 `http://127.0.0.1:8000`，可通过以下方式覆盖：
+前端默认连接 `http://127.0.0.1:8000`：
 
 ```bash
-VITE_API_BASE=http://your-backend-host:8000 npm run dev
+VITE_API_BASE=http://other-host:8000 npm run dev
 ```
 
-## 平台适配器开发
+## 平台适配器
 
-每个平台适配器必须实现：
+每个平台适配器实现 `PlatformAdapter` 接口：
 
-- `login_url`
-- `is_logged_in`
-- `fetch_assignments`
+- `id` / `name` / `login_url` — 标识
+- `is_logged_in(page)` — 检测登录状态
+- `fetch_assignments(storage_state)` → `list[NormalizedAssignment]` — 抓取作业
 
-当前适配器文件：
+添加新平台只需实现此接口并在 `registry.py` 注册。
 
-- `backend/app/platforms/educoder.py`
-- `backend/app/platforms/nju_lms.py`
-- `backend/app/platforms/cslab_cms.py`
+## 安全
 
-推荐开发流程：
-
-1. 从 UI 发起浏览器登录。
-2. 手动完成登录。
-3. 使用 Playwright tracing 或浏览器开发者工具定位平台的作业 API/页面。
-4. 在对应适配器中实现解析逻辑。
-5. 使用脱敏的 HTML/JSON fixture 添加测试。
-
-## 安全注意事项
-
-- 不要记录 cookie、密码、storage state 或认证头到日志中。
-- 不要添加验证码 OCR 或绕过验证码的功能。
-- 任何共享部署必须使用 HTTPS。
-- 更换 `NJU_DDL_SECRET` 前需制定 cookie/会话迁移方案，因为已加密的平台 cookie 依赖此密钥。
+- 不记录 cookie、密码、storage state 到日志
+- 不实现验证码 OCR 绕过（浏览器手动输入）
+- 共享部署必须使用 HTTPS
+- 更换 `NJU_DDL_SECRET` 会使已加密 cookie 失效
