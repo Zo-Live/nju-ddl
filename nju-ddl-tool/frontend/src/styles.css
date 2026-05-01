@@ -209,6 +209,12 @@ button.danger {
   padding: 0;
 }
 
+.check.checked {
+  border-color: #1f6f8b;
+  background: #e8f4f8;
+  font-weight: 700;
+}
+
 .assignment-main {
   min-width: 0;
 }
@@ -220,7 +226,55 @@ button.danger {
   align-items: baseline;
 }
 
-.assignment-title span {
+.assignment-source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  min-width: 0;
+}
+
+.platform-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border: 1px solid #c8d0d8;
+  border-radius: 6px;
+  padding: 1px 7px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.platform-educoder {
+  border-color: #b9dfc8;
+  background: #eef7f2;
+  color: #166534;
+}
+
+.platform-nju-lms {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.platform-cslab-cms {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.platform-default {
+  border-color: #c8d0d8;
+  background: #f8fafc;
+  color: #334155;
+}
+
+.course-name {
   color: #65717c;
   font-size: 14px;
 }
@@ -235,6 +289,16 @@ button.danger {
   gap: 4px;
   justify-items: end;
   white-space: nowrap;
+}
+
+.assignment-meta .manual-status {
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+  padding: 1px 7px;
+  background: #f0fdf4;
+  color: #166534;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .empty {

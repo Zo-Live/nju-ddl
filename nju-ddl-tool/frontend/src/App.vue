@@ -13,6 +13,8 @@ import {
 } from './api'
 import type { Assignment, PlatformInfo } from './api'
 
+type SortKey = 'deadline' | 'course' | 'platform' | 'status'
+
 const username = ref('')
 const password = ref('')
 const authToken = ref(localStorage.getItem('nju-ddl-token') || '')
@@ -23,7 +25,7 @@ const platforms = ref<PlatformInfo[]>([])
 const assignments = ref<Assignment[]>([])
 const includeCompleted = ref(false)
 const selectedPlatform = ref('all')
-const sortBy = ref<'deadline' | 'course' | 'platform' | 'status'>('deadline')
+const sortBy = ref<SortKey>('deadline')
 const busy = ref('')
 const message = ref('')
 const loading = ref(false)
@@ -33,22 +35,94 @@ const formErrors = ref<{ username?: string; password?: string }>({})
 const virtualDesktopUrl = (import.meta.env.VITE_NOVNC_URL || '').trim()
 const activeLogin = ref<{ virtualDesktopUrl: string } | null>(null)
 
+const fallbackPlatformNames: Record<string, string> = {
+  educoder: 'Educoder',
+  nju_lms: 'NJU LMS',
+  cslab_cms: 'CSLab CMS',
+}
+
+const sortOptions: { value: SortKey; label: string }[] = [
+  { value: 'deadline', label: '按截止时间' },
+  { value: 'course', label: '按课程' },
+  { value: 'platform', label: '按平台' },
+  { value: 'status', label: '按完成状态' },
+]
+
 const isAuthed = computed(() => Boolean(authToken.value))
 const visibleAssignments = computed(() => {
   let list = assignments.value
   if (selectedPlatform.value !== 'all') {
     list = list.filter((item) => item.platform_id === selectedPlatform.value)
   }
-  return [...list].sort((a, b) => {
-    switch (sortBy.value) {
-      case 'deadline': return (a.deadline ?? 'z').localeCompare(b.deadline ?? 'z')
-      case 'course':   return a.course_name.localeCompare(b.course_name)
-      case 'platform': return a.platform_id.localeCompare(b.platform_id)
-      case 'status':   return a.effective_status.localeCompare(b.effective_status)
-      default: return 0
-    }
-  })
+  if (!includeCompleted.value) {
+    list = list.filter((item) => !isManuallyCompleted(item))
+  }
+  return [...list].sort(compareAssignments)
 })
+
+function compareAssignments(a: Assignment, b: Assignment) {
+  const fallback = compareText(platformLabel(a.platform_id), platformLabel(b.platform_id))
+    || compareText(displayCourseName(a) || a.title, displayCourseName(b) || b.title)
+    || compareText(a.title, b.title)
+    || a.id - b.id
+
+  switch (sortBy.value) {
+    case 'deadline': return compareDeadlineDesc(a, b) || fallback
+    case 'course':   return compareText(displayCourseName(a) || platformLabel(a.platform_id), displayCourseName(b) || platformLabel(b.platform_id)) || fallback
+    case 'platform': return compareText(platformLabel(a.platform_id), platformLabel(b.platform_id)) || fallback
+    case 'status':   return Number(isManuallyCompleted(a)) - Number(isManuallyCompleted(b)) || compareDeadlineDesc(a, b) || fallback
+    default: return fallback
+  }
+}
+
+function compareDeadlineDesc(a: Assignment, b: Assignment) {
+  const aTime = deadlineTime(a.deadline)
+  const bTime = deadlineTime(b.deadline)
+  if (aTime === null && bTime === null) return 0
+  if (aTime === null) return 1
+  if (bTime === null) return -1
+  return bTime - aTime
+}
+
+function deadlineTime(value: string | null) {
+  if (!value) return null
+  const time = new Date(value).getTime()
+  return Number.isFinite(time) ? time : null
+}
+
+function compareText(a: string, b: string) {
+  return a.localeCompare(b, 'zh-CN')
+}
+
+function isManuallyCompleted(item: Assignment) {
+  return item.manual_status === 'completed'
+}
+
+function platformLabel(platformId: string) {
+  return platforms.value.find((platform) => platform.id === platformId)?.name
+    || fallbackPlatformNames[platformId]
+    || platformId
+}
+
+function platformBadgeClass(platformId: string) {
+  switch (platformId) {
+    case 'educoder': return 'platform-educoder'
+    case 'nju_lms': return 'platform-nju-lms'
+    case 'cslab_cms': return 'platform-cslab-cms'
+    default: return 'platform-default'
+  }
+}
+
+function displayCourseName(item: Assignment) {
+  const name = item.course_name.trim()
+  if (!name || name === item.platform_course_id.trim()) return ''
+  if (/^[a-z0-9_-]{4,}$/i.test(name) && !/[\u4e00-\u9fff]/.test(name)) return ''
+  return name
+}
+
+function completionTitle(item: Assignment) {
+  return isManuallyCompleted(item) ? '取消手动完成' : '标记为手动完成'
+}
 
 async function signIn() {
   authError.value = ''
@@ -93,7 +167,7 @@ async function loadAll() {
   loadError.value = ''
   try {
     platforms.value = await getPlatforms()
-    assignments.value = await getAssignments(includeCompleted.value)
+    assignments.value = await getAssignments(true)
   } catch (error) {
     loadError.value = error instanceof Error ? error.message : '加载失败'
   } finally {
@@ -172,10 +246,12 @@ async function removePlatform(platform: PlatformInfo) {
 
 async function toggleComplete(item: Assignment) {
   try {
-    const updated = await setCompletion(item.id, item.effective_status !== 'completed')
+    const updated = await setCompletion(item.id, !isManuallyCompleted(item))
     const index = assignments.value.findIndex((entry) => entry.id === item.id)
     if (index >= 0) assignments.value[index] = updated
-    if (!includeCompleted.value) assignments.value = assignments.value.filter((entry) => entry.effective_status !== 'completed')
+    if (!includeCompleted.value) {
+      assignments.value = assignments.value.filter((entry) => !isManuallyCompleted(entry))
+    }
   } catch (error) {
     message.value = error instanceof Error ? error.message : '操作失败'
   }
@@ -263,13 +339,12 @@ onMounted(loadAll)
           <option v-for="platform in platforms" :key="platform.id" :value="platform.id">{{ platform.name }}</option>
         </select>
         <select v-model="sortBy">
-          <option value="deadline">按截止时间</option>
-          <option value="course">按课程</option>
-          <option value="platform">按平台</option>
-          <option value="status">按状态</option>
+          <option v-for="option in sortOptions" :key="option.value" :value="option.value">
+            {{ option.label }}
+          </option>
         </select>
         <label class="inline">
-          <input v-model="includeCompleted" type="checkbox" @change="loadAll" />
+          <input v-model="includeCompleted" type="checkbox" />
           显示已完成
         </label>
         <button class="secondary" @click="loadAll">重新加载</button>
@@ -277,20 +352,31 @@ onMounted(loadAll)
 
       <section class="assignments">
         <article v-for="item in visibleAssignments" :key="item.id" class="assignment-row">
-          <button class="check" @click="toggleComplete(item)">
-            {{ item.effective_status === 'completed' ? '✓' : '' }}
+          <button
+            class="check"
+            :class="{ checked: isManuallyCompleted(item) }"
+            :title="completionTitle(item)"
+            :aria-pressed="isManuallyCompleted(item)"
+            @click="toggleComplete(item)"
+          >
+            {{ isManuallyCompleted(item) ? '✓' : '' }}
           </button>
           <div class="assignment-main">
             <div class="assignment-title">
               <strong>{{ item.title }}</strong>
-              <span>{{ item.course_name }}</span>
+            </div>
+            <div class="assignment-source">
+              <span :class="['platform-badge', platformBadgeClass(item.platform_id)]">
+                {{ platformLabel(item.platform_id) }}
+              </span>
+              <span v-if="displayCourseName(item)" class="course-name">{{ displayCourseName(item) }}</span>
             </div>
             <p v-if="item.description">{{ item.description }}</p>
             <a v-if="item.source_url" :href="item.source_url" target="_blank" rel="noreferrer">来源链接</a>
           </div>
           <div class="assignment-meta">
             <strong>{{ formatDate(item.deadline) }}</strong>
-            <span>{{ item.effective_status }}</span>
+            <span v-if="isManuallyCompleted(item)" class="manual-status">已手动完成</span>
           </div>
         </article>
         <p v-if="loading" class="empty">加载中…</p>
