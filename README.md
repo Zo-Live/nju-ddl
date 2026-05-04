@@ -152,3 +152,7 @@ nju-ddl-tool/
 - 不记录 cookie、密码、storage state 到日志
 - 生产部署必须使用 HTTPS
 - 更换 `NJU_DDL_SECRET` 会导致已加密的 cookie 失效，需要迁移方案
+
+## 许可证
+
+MIT
